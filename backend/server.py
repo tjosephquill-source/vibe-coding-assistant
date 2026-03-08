@@ -77,4 +77,3 @@ if _frontend_dir.is_dir():
         return (_frontend_dir / "index.html").read_text()
 
     app.mount("/static", StaticFiles(directory=str(_frontend_dir)), name="static")
-

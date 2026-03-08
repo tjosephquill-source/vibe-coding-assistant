@@ -314,6 +314,13 @@ const API_BASE = window.location.origin;
 const ABSTRACT_NODES = true;
 const ABSTRACT_THRESHOLD = 6;
 
+// ── Position cache ─────────────────────────────────────────────────
+const _positionCache = new Map(); // cacheKey → Map<nodeId, {x, y}>
+
+function _graphCacheKey(nodes) {
+  return nodes.map(n => n.id).sort().join("|");
+}
+
 const NODE_SIZE = {
   class: { w: 240, h: 158 },
   method: { w: 190, h: 70 },
@@ -482,7 +489,16 @@ function pullBack(px, py, fromX, fromY, offset) {
 }
 
 function edgePath(d) {
-  const src = d.source, tgt = d.target;
+  // D3 force simulation mutates e.source/e.target from id strings → node objects.
+  // Guard against both cases so edges render correctly on drilled-into subgraphs.
+  const src = (typeof d.source === "object" && d.source !== null) ? d.source : window._nodeData?.find(n => n.id === d.source);
+  const tgt = (typeof d.target === "object" && d.target !== null) ? d.target : window._nodeData?.find(n => n.id === d.target);
+
+  // If nodes aren't resolved yet or positions aren't set, return an empty path
+  if (!src || !tgt || src.x == null || src.y == null || tgt.x == null || tgt.y == null) {
+    return "M0,0";
+  }
+
   const srcSize = NODE_SIZE[src.kind] || { w: 160, h: 60 };
   const tgtSize = NODE_SIZE[tgt.kind] || { w: 160, h: 60 };
 
@@ -492,15 +508,11 @@ function edgePath(d) {
   const cpx = (src.x + tgt.x) / 2 + nx * (d._curve || 0);
   const cpy = (src.y + tgt.y) / 2 + ny * (d._curve || 0);
 
-  // clip to box edges
   const rawStart = getRectIntersection(tgt.x, tgt.y, src.x, src.y, srcSize.w, srcSize.h);
   const rawEnd   = getRectIntersection(src.x, src.y, tgt.x, tgt.y, tgtSize.w, tgtSize.h);
 
-  // pull endpoint back so arrowhead sits visibly outside the box
   const offset = MARKER_OFFSET[d.kind] || 14;
   const end = pullBack(rawEnd.x, rawEnd.y, src.x, src.y, offset);
-
-  // for contains, also pull start back for the diamond marker
   const start = d.kind === "contains"
     ? pullBack(rawStart.x, rawStart.y, tgt.x, tgt.y, offset)
     : rawStart;
@@ -749,8 +761,6 @@ function renderGraph() {
   const nodeById = new Map(graphData.nodes.map(n => [n.id, n]));
   const baseNodes = graphData.nodes.filter(n => activeNodeKinds.has(n.kind));
 
-  // Rule: hide smaller contained nodes when larger parent is visible
-  // (e.g. hide method nodes when their class node is visible)
   const visibleClassIds = new Set(baseNodes.filter(n => n.kind === "class").map(n => n.id));
   const suppressedNodeIds = new Set();
 
@@ -773,8 +783,6 @@ function renderGraph() {
     return activeEdgeKinds.has(e.kind) && nodeIds.has(s) && nodeIds.has(t);
   });
 
-  // Build link/node arrays for D3 (clone to avoid mutation issues)
-  // Assign stable curve offsets to fan out parallel edges
   const rawLinks = edges.map((e, i) => ({
     ...e,
     source: e.source,
@@ -783,7 +791,6 @@ function renderGraph() {
     _curve: 0,
   }));
 
-  // Group edges by canonical node-pair key (order-independent)
   const pairGroups = new Map();
   rawLinks.forEach(e => {
     const a = typeof e.source === "object" ? e.source.id : e.source;
@@ -793,134 +800,46 @@ function renderGraph() {
     pairGroups.get(key).push(e);
   });
 
-  // Spread parallel edges symmetrically around centre
   pairGroups.forEach(group => {
     const count = group.length;
     group.forEach((e, idx) => {
-      const offset = (idx - (count - 1) / 2) * PARALLEL_EDGE_SPACING;
-      e._curve = offset;
+      e._curve = (idx - (count - 1) / 2) * PARALLEL_EDGE_SPACING;
     });
   });
 
   const linkData = rawLinks;
   const nodeData = nodes.map(n => ({ ...n }));
 
-  // Seed better initial positions (less crowding + fewer crossings)
-  seedPositions(nodeData, linkData, width, height);
-
-  // Compute isolated bottom Y from seeded data
-  const connectedYs = nodeData.filter(n => !n._isolated).map(n => n.y);
-  const maxConnectedY = connectedYs.length ? Math.max(...connectedYs) : height / 2;
-  const isolatedTargetY = maxConnectedY + ISOLATED_ROW_Y_OFFSET;
+  // ── Check position cache ───────────────────────────────────────
+  const cacheKey = _graphCacheKey(nodeData);
+  const cachedPositions = _positionCache.get(cacheKey);
 
   // Arrow markers — refX=0 because paths now end at box edge
   const defs = svg.append("defs");
+  defs.append("marker").attr("id","arrow-inherits").attr("viewBox","0 -9 18 18").attr("refX",18).attr("refY",0).attr("markerWidth",14).attr("markerHeight",14).attr("orient","auto").append("path").attr("d","M0,-9L18,0L0,9Z").attr("fill","none").attr("stroke","#f97583").attr("stroke-width",2.5);
+  defs.append("marker").attr("id","arrow-calls").attr("viewBox","0 -6 12 12").attr("refX",12).attr("refY",0).attr("markerWidth",12).attr("markerHeight",12).attr("orient","auto").append("path").attr("d","M0,-6L12,0L0,6Z").attr("fill","#58a6ff");
+  defs.append("marker").attr("id","arrow-imports").attr("viewBox","0 -6 12 12").attr("refX",12).attr("refY",0).attr("markerWidth",12).attr("markerHeight",12).attr("orient","auto").append("path").attr("d","M0,-6L12,0L0,6").attr("fill","none").attr("stroke","#8b949e").attr("stroke-width",2.5);
+  defs.append("marker").attr("id","arrow-instantiates").attr("viewBox","-1 -7 18 14").attr("refX",17).attr("refY",0).attr("markerWidth",14).attr("markerHeight",14).attr("orient","auto").append("path").attr("d","M0,0L8,-6L16,0L8,6Z").attr("fill","none").attr("stroke","#d2a8ff").attr("stroke-width",2.5);
+  defs.append("marker").attr("id","arrow-uses_type").attr("viewBox","0 -6 12 12").attr("refX",12).attr("refY",0).attr("markerWidth",12).attr("markerHeight",12).attr("orient","auto").append("path").attr("d","M0,-6L12,0L0,6").attr("fill","none").attr("stroke","#7ee787").attr("stroke-width",2.5);
+  defs.append("marker").attr("id","diamond-contains-end").attr("viewBox","-1 -7 18 14").attr("refX",0).attr("refY",0).attr("markerWidth",14).attr("markerHeight",14).attr("orient","auto-start-reverse").append("path").attr("d","M0,0L8,-6L16,0L8,6Z").attr("fill","#8b949e").attr("stroke","#8b949e");
 
-  // inherits: large hollow triangle (UML generalisation)
-  defs.append("marker")
-    .attr("id", "arrow-inherits")
-    .attr("viewBox", "0 -9 18 18")
-    .attr("refX", 18).attr("refY", 0)
-    .attr("markerWidth", 14).attr("markerHeight", 14)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,-9L18,0L0,9Z")
-    .attr("fill", "none")
-    .attr("stroke", "#f97583")
-    .attr("stroke-width", 2.5);
-
-  // calls: large filled arrowhead
-  defs.append("marker")
-    .attr("id", "arrow-calls")
-    .attr("viewBox", "0 -6 12 12")
-    .attr("refX", 12).attr("refY", 0)
-    .attr("markerWidth", 12).attr("markerHeight", 12)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,-6L12,0L0,6Z")
-    .attr("fill", "#58a6ff");
-
-  // imports: large open arrowhead + dashed line
-  defs.append("marker")
-    .attr("id", "arrow-imports")
-    .attr("viewBox", "0 -6 12 12")
-    .attr("refX", 12).attr("refY", 0)
-    .attr("markerWidth", 12).attr("markerHeight", 12)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,-6L12,0L0,6")
-    .attr("fill", "none")
-    .attr("stroke", "#8b949e")
-    .attr("stroke-width", 2.5);
-
-  // instantiates: large hollow diamond
-  defs.append("marker")
-    .attr("id", "arrow-instantiates")
-    .attr("viewBox", "-1 -7 18 14")
-    .attr("refX", 17).attr("refY", 0)
-    .attr("markerWidth", 14).attr("markerHeight", 14)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,0L8,-6L16,0L8,6Z")
-    .attr("fill", "none")
-    .attr("stroke", "#d2a8ff")
-    .attr("stroke-width", 2.5);
-
-  // uses_type: large open arrowhead
-  defs.append("marker")
-    .attr("id", "arrow-uses_type")
-    .attr("viewBox", "0 -6 12 12")
-    .attr("refX", 12).attr("refY", 0)
-    .attr("markerWidth", 12).attr("markerHeight", 12)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,-6L12,0L0,6")
-    .attr("fill", "none")
-    .attr("stroke", "#7ee787")
-    .attr("stroke-width", 2.5);
-
-  // contains: filled diamond at source
-  defs.append("marker")
-    .attr("id", "diamond-contains-end")
-    .attr("viewBox", "-1 -7 18 14")
-    .attr("refX", 0).attr("refY", 0)
-    .attr("markerWidth", 14).attr("markerHeight", 14)
-    .attr("orient", "auto-start-reverse")
-    .append("path")
-    .attr("d", "M0,0L8,-6L16,0L8,6Z")
-    .attr("fill", "#8b949e")
-    .attr("stroke", "#8b949e");
-
-  // Zoom layer
+  // Zoom — programmatic only, disable all user interaction
   const g = svg.append("g");
   const zoomBehavior = d3.zoom()
     .scaleExtent([0.1, 4])
     .on("zoom", (event) => g.attr("transform", event.transform));
+
   svg.call(zoomBehavior);
-  window._zoomBehavior = zoomBehavior; // expose for snapNodesToGrid
+  svg.on("wheel.zoom", null)
+     .on("mousedown.zoom", null)
+     .on("touchstart.zoom", null)
+     .on("touchmove.zoom", null)
+     .on("touchend.zoom", null)
+     .on("dblclick.zoom", null);
 
-  // Simulation
-  simulation = d3.forceSimulation(nodeData)
-    .alpha(1)
-    .alphaDecay(0.03)
-    .velocityDecay(0.35)
-    .force("link", d3.forceLink(linkData)
-      .id(d => d.id)
-      .distance(d => EDGE_DISTANCE[d.kind] || 240)
-      .strength(d => d.kind === "contains" ? 0.35 : 0.2)
-      .iterations(3)
-    )
-    .force("charge", d3.forceManyBody().strength(d => NODE_CHARGE[d.kind] || -500))
-    .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide().radius(d => {
-      const s = NODE_SIZE[d.kind] || { w: 160, h: 60 };
-      return Math.sqrt((s.w * s.w) + (s.h * s.h)) / 2 + COLLISION_PAD;
-    }))
-    .force("isolatedBottom", makeIsolatedBottomForce(isolatedTargetY, ISOLATED_FORCE_STRENGTH))
-    .force("x", d3.forceX(width / 2).strength(0.025))
-    .force("y", d3.forceY(height / 2).strength(0.025));
+  window._zoomBehavior = zoomBehavior;
 
-  // Edges (as paths)
+  // Edges
   const link = g.append("g").selectAll("path")
     .data(linkData)
     .join("path")
@@ -929,27 +848,14 @@ function renderGraph() {
     .attr("marker-end", d => `url(#arrow-${d.kind})`)
     .attr("marker-start", d => d.kind === "contains" ? `url(#diamond-contains-end)` : null);
 
-  // Nodes
+  // Nodes — no drag
   const node = g.append("g").selectAll("g")
     .data(nodeData)
     .join("g")
     .attr("class", "node-group")
-    .call(d3.drag()
-      .on("start", dragStarted)
-      .on("drag", dragged)
-      .on("end", dragEnded)
-    )
-    .on("mouseenter", (event, d) => {
-      event.stopPropagation();
-      highlightConnected(d);
-    })
-    .on("mouseleave", () => {
-      clearHighlight();
-    })
-    .on("click", (event, d) => {
-      event.stopPropagation();
-      drillIntoNode(d);
-    });
+    .on("mouseenter", (event, d) => { event.stopPropagation(); highlightConnected(d); })
+    .on("mouseleave", () => { clearHighlight(); })
+    .on("click", (event, d) => { event.stopPropagation(); drillIntoNode(d); });
 
   node.append("rect")
     .attr("class", d => `node-rect ${d.kind}`)
@@ -958,70 +864,77 @@ function renderGraph() {
     .attr("width", d => NODE_SIZE[d.kind]?.w || 160)
     .attr("height", d => NODE_SIZE[d.kind]?.h || 60);
 
-  node.append("text")
-    .attr("class", "node-title")
-    .attr("x", d => -(NODE_SIZE[d.kind]?.w || 160) / 2 + 10)
-    .attr("y", d => -(NODE_SIZE[d.kind]?.h || 60) / 2 + 18)
-    .attr("text-anchor", "start")
-    .text(d => d.name);
+  node.append("text").attr("class","node-title").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+18).attr("text-anchor","start").text(d=>d.name);
+  node.append("text").attr("class","node-kind-inside").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+34).attr("text-anchor","start").text(d=>d.kind);
 
-  node.append("text")
-    .attr("class", "node-kind-inside")
-    .attr("x", d => -(NODE_SIZE[d.kind]?.w || 160) / 2 + 10)
-    .attr("y", d => -(NODE_SIZE[d.kind]?.h || 60) / 2 + 34)
-    .attr("text-anchor", "start")
-    .text(d => d.kind);
-
-  // Class-only scroll list of methods inside node
   const classFo = node.filter(d => d.kind === "class")
-    .append("foreignObject")
-    .attr("class", "node-methods-fo")
-    .attr("x", d => -(NODE_SIZE[d.kind].w / 2))
-    .attr("y", d => -(NODE_SIZE[d.kind].h / 2) + 38)
-    .attr("width", d => NODE_SIZE[d.kind].w)
-    .attr("height", d => NODE_SIZE[d.kind].h - 40)
-    .html(d => {
-      const methods = (d.methods || []).map(m => `<div>${m}()</div>`).join("");
-      return `
-        <div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">
-          <div class="node-methods-label">Methods (${(d.methods || []).length})</div>
-          <div class="node-methods-scroll">${methods || "<div>(none)</div>"}</div>
-        </div>
-      `;
-    });
-
-  classFo.on("click", (event, d) => {
-    event.stopPropagation();
-    drillIntoNode(d);
-  });
+    .append("foreignObject").attr("class","node-methods-fo")
+    .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
+    .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
+    .html(d=>{const methods=(d.methods||[]).map(m=>`<div>${m}()</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Methods (${(d.methods||[]).length})</div><div class="node-methods-scroll">${methods||"<div>(none)</div>"}</div></div>`;});
+  classFo.on("click",(event,d)=>{event.stopPropagation();drillIntoNode(d);});
 
   const metaFo = node.filter(d => d.kind === "metaclass")
-    .append("foreignObject")
-    .attr("class", "node-methods-fo")
-    .attr("x", d => -(NODE_SIZE[d.kind].w / 2))
-    .attr("y", d => -(NODE_SIZE[d.kind].h / 2) + 38)
-    .attr("width", d => NODE_SIZE[d.kind].w)
-    .attr("height", d => NODE_SIZE[d.kind].h - 40)
-    .html(d => {
-      const members = (d.members || []).map(m => `<div>${m}</div>`).join("");
-      return `
-        <div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">
-          <div class="node-methods-label">Classes (${(d.members || []).length})</div>
-          <div class="node-methods-scroll">${members || "<div>(none)</div>"}</div>
-        </div>
-      `;
+    .append("foreignObject").attr("class","node-methods-fo")
+    .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
+    .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
+    .html(d=>{const members=(d.members||[]).map(m=>`<div>${m}</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Classes (${(d.members||[]).length})</div><div class="node-methods-scroll">${members||"<div>(none)</div>"}</div></div>`;});
+  metaFo.on("click",(event,d)=>{event.stopPropagation();drillIntoNode(d);});
+
+  // ── Restore from cache — skip simulation ──────────────────────
+  if (cachedPositions) {
+    nodeData.forEach(n => {
+      const pos = cachedPositions.get(n.id);
+      if (pos) { n.x = pos.x; n.y = pos.y; }
     });
 
-  metaFo.on("click", (event, d) => {
-    event.stopPropagation();
-    drillIntoNode(d);
-  });
+    // MUST set window._nodeData before calling edgePath
+    window._nodes = node;
+    window._links = link;
+    window._nodeData = nodeData;
+    window._linkData = linkData;
 
-  // Tick
+    // Pre-resolve string source/target → node objects so edgePath works
+    const nodeMap = new Map(nodeData.map(n => [n.id, n]));
+    linkData.forEach(d => {
+      if (typeof d.source === "string") d.source = nodeMap.get(d.source) || d.source;
+      if (typeof d.target === "string") d.target = nodeMap.get(d.target) || d.target;
+    });
+
+    node.attr("transform", d => `translate(${d.x},${d.y})`);
+    link.attr("d", edgePath);
+    fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, 56, false);
+    svg.on("click", () => { selectedNode = null; clearHighlight(); });
+    return;
+  }
+
+  // ── Fresh layout ───────────────────────────────────────────────
+
+  // Set window._nodeData early so edgePath lookups work during simulation ticks
+  window._nodes = node;
+  window._links = link;
+  window._nodeData = nodeData;
+  window._linkData = linkData;
+
+  seedPositions(nodeData, linkData, width, height);
+
+  const connectedYs = nodeData.filter(n => !n._isolated).map(n => n.y);
+  const maxConnectedY = connectedYs.length ? Math.max(...connectedYs) : height / 2;
+  const isolatedTargetY = maxConnectedY + ISOLATED_ROW_Y_OFFSET;
+
+  simulation = d3.forceSimulation(nodeData)
+    .alpha(1).alphaDecay(0.03).velocityDecay(0.35)
+    .force("link", d3.forceLink(linkData).id(d=>d.id).distance(d=>EDGE_DISTANCE[d.kind]||240).strength(d=>d.kind==="contains"?0.35:0.2).iterations(3))
+    .force("charge", d3.forceManyBody().strength(d=>NODE_CHARGE[d.kind]||-500))
+    .force("center", d3.forceCenter(width/2,height/2))
+    .force("collision", d3.forceCollide().radius(d=>{const s=NODE_SIZE[d.kind]||{w:160,h:60};return Math.sqrt(s.w*s.w+s.h*s.h)/2+COLLISION_PAD;}))
+    .force("isolatedBottom", makeIsolatedBottomForce(isolatedTargetY, ISOLATED_FORCE_STRENGTH))
+    .force("x", d3.forceX(width/2).strength(0.025))
+    .force("y", d3.forceY(height/2).strength(0.025));
+
   simulation.on("tick", () => {
     link.attr("d", edgePath);
     node.attr("transform", d => `translate(${d.x},${d.y})`);
-
     if (autoFitActive) {
       const now = performance.now();
       if (now - lastAutoFitTs >= AUTO_FIT_INTERVAL_MS) {
@@ -1032,31 +945,29 @@ function renderGraph() {
     }
   });
 
-  simulation.on("end", () => {
-    didInitialFit = true;
+  function _saveAndSnap() {
     autoFitActive = false;
     snapNodesToGrid(nodeData, svg, g, node, link);
+    const posMap = new Map(nodeData.map(n => [n.id, { x: n.x, y: n.y }]));
+    _positionCache.set(cacheKey, posMap);
+  }
+
+  simulation.on("end", () => {
+    if (didInitialFit) return;
+    didInitialFit = true;
+    _saveAndSnap();
   });
 
   setTimeout(() => {
-    if (!didInitialFit) {
-      didInitialFit = true;
-      autoFitActive = false;
-      snapNodesToGrid(nodeData, svg, g, node, link);
-    }
+    if (didInitialFit) return;
+    didInitialFit = true;
+    simulation.stop();
+    _saveAndSnap();
   }, 4000);
 
-  // Click background to deselect
-  svg.on("click", () => {
-    selectedNode = null;
-    clearHighlight();
-  });
+  svg.on("click", () => { selectedNode = null; clearHighlight(); });
 
-  // Store references for highlight
-  window._nodes = node;
-  window._links = link;
-  window._nodeData = nodeData;
-  window._linkData = linkData;
+  // NOTE: window._nodes/_links/_nodeData/_linkData already set above (before simulation)
 }
 
 // ── Node selection & detail panel ──────────────────────────────────
@@ -1294,23 +1205,7 @@ function clearHighlight() {
   showPlaceholder();
 }
 
-// ── Drag handlers ──────────────────────────────────────────────────
-function dragStarted(event) {
-  if (!event.active) simulation.alphaTarget(0.3).restart();
-  event.subject.fx = event.subject.x;
-  event.subject.fy = event.subject.y;
-}
-
-function dragged(event) {
-  event.subject.fx = event.x;
-  event.subject.fy = event.y;
-}
-
-function dragEnded(event) {
-  if (!event.active) simulation.alphaTarget(0);
-  event.subject.fx = null;
-  event.subject.fy = null;
-}
+// ── Drag handlers — removed (dragging disabled) ────────────────────
 
 // ── Filters ────────────────────────────────────────────────────────
 // removed: toolbar filter toggle logic
@@ -1346,4 +1241,3 @@ loadGraph();
 
 </body>
 </html>
-
