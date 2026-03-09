@@ -489,12 +489,9 @@ function pullBack(px, py, fromX, fromY, offset) {
 }
 
 function edgePath(d) {
-  // D3 force simulation mutates e.source/e.target from id strings → node objects.
-  // Guard against both cases so edges render correctly on drilled-into subgraphs.
   const src = (typeof d.source === "object" && d.source !== null) ? d.source : window._nodeData?.find(n => n.id === d.source);
   const tgt = (typeof d.target === "object" && d.target !== null) ? d.target : window._nodeData?.find(n => n.id === d.target);
 
-  // If nodes aren't resolved yet or positions aren't set, return an empty path
   if (!src || !tgt || src.x == null || src.y == null || tgt.x == null || tgt.y == null) {
     return "M0,0";
   }
@@ -504,20 +501,26 @@ function edgePath(d) {
 
   const dx = tgt.x - src.x, dy = tgt.y - src.y;
   const len = Math.hypot(dx, dy) || 1;
+  // Perpendicular unit vector
   const nx = -dy / len, ny = dx / len;
-  const cpx = (src.x + tgt.x) / 2 + nx * (d._curve || 0);
-  const cpy = (src.y + tgt.y) / 2 + ny * (d._curve || 0);
 
-  const rawStart = getRectIntersection(tgt.x, tgt.y, src.x, src.y, srcSize.w, srcSize.h);
-  const rawEnd   = getRectIntersection(src.x, src.y, tgt.x, tgt.y, tgtSize.w, tgtSize.h);
+  // Lateral offset for parallel edges
+  const offset = d._curve || 0;
 
-  const offset = MARKER_OFFSET[d.kind] || 14;
-  const end = pullBack(rawEnd.x, rawEnd.y, src.x, src.y, offset);
+  // Shift both endpoints perpendicular to the edge direction
+  const sx = src.x + nx * offset, sy = src.y + ny * offset;
+  const tx = tgt.x + nx * offset, ty = tgt.y + ny * offset;
+
+  const rawStart = getRectIntersection(tx, ty, sx, sy, srcSize.w, srcSize.h);
+  const rawEnd   = getRectIntersection(sx, sy, tx, ty, tgtSize.w, tgtSize.h);
+
+  const markerOff = MARKER_OFFSET[d.kind] || 14;
+  const end = pullBack(rawEnd.x, rawEnd.y, sx, sy, markerOff);
   const start = d.kind === "contains"
-    ? pullBack(rawStart.x, rawStart.y, tgt.x, tgt.y, offset)
+    ? pullBack(rawStart.x, rawStart.y, tx, ty, markerOff)
     : rawStart;
 
-  return `M${start.x},${start.y} Q${cpx},${cpy} ${end.x},${end.y}`;
+  return `M${start.x},${start.y} L${end.x},${end.y}`;
 }
 
 // ── Deterministic hash ─────────────────────────────────────────────
@@ -789,6 +792,7 @@ function renderGraph() {
     target: e.target,
     _pathId: `edge-path-${i}`,
     _curve: 0,
+    _dirSign: 1,
   }));
 
   const pairGroups = new Map();
@@ -801,8 +805,17 @@ function renderGraph() {
   });
 
   pairGroups.forEach(group => {
+    group.sort((e1, e2) => {
+      const s1 = typeof e1.source === "object" ? e1.source.id : e1.source;
+      const t1 = typeof e1.target === "object" ? e1.target.id : e1.target;
+      const s2 = typeof e2.source === "object" ? e2.source.id : e2.source;
+      const t2 = typeof e2.target === "object" ? e2.target.id : e2.target;
+      return `${s1}|${t1}|${e1.kind}`.localeCompare(`${s2}|${t2}|${e2.kind}`);
+    });
+
     const count = group.length;
     group.forEach((e, idx) => {
+      // Evenly space edges perpendicular to the line; centre the band
       e._curve = (idx - (count - 1) / 2) * PARALLEL_EDGE_SPACING;
     });
   });
@@ -1241,3 +1254,4 @@ loadGraph();
 
 </body>
 </html>
+
