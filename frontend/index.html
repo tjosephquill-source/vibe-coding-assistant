@@ -488,8 +488,20 @@ let _overviewSvgRef = null;
 let _detailIsDragging = false;
 const DETAIL_ZOOM_SCALE = 2.5;
 
+// Pending timeout IDs for cancellation on re-render
+let _pendingDetailTimeout = null;
+let _pendingEnsureTimeouts = [];
+
 // ── Cleanup helper for detail view state ───────────────────────────
 function cleanupDetailView() {
+  // Cancel any pending init/ensure timeouts from previous render
+  if (_pendingDetailTimeout != null) {
+    clearTimeout(_pendingDetailTimeout);
+    _pendingDetailTimeout = null;
+  }
+  _pendingEnsureTimeouts.forEach(function(tid) { clearTimeout(tid); });
+  _pendingEnsureTimeouts = [];
+
   if (_viewportRect) {
     _viewportRect.remove();
     _viewportRect = null;
@@ -500,6 +512,12 @@ function cleanupDetailView() {
     _overviewSvgRef.on("mousemove.detailnav", null);
   }
   d3.select(window).on("mouseup.detailnav", null);
+
+  // Always clean the zoom-svg DOM element, even if _zoomSvg ref is stale/null
+  var zoomSvgEl = d3.select("#zoom-svg");
+  zoomSvgEl.on(".zoom", null);
+  zoomSvgEl.selectAll("*").remove();
+
   if (_zoomSvg) {
     _zoomSvg.on(".zoom", null);
     _zoomSvg.selectAll("*").remove();
@@ -711,6 +729,8 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
   if (padding === undefined) padding = 40;
   if (animate === undefined) animate = true;
   if (!nodeData || nodeData.length === 0) return;
+  if (width <= 0 || height <= 0) return;
+
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   nodeData.forEach(n => {
     const s = NODE_SIZE[n.kind] || { w: 160, h: 60 };
@@ -719,8 +739,12 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
     if (x1 < minX) minX = x1; if (y1 < minY) minY = y1;
     if (x2 > maxX) maxX = x2; if (y2 > maxY) maxY = y2;
   });
-  const graphW = Math.max(1, maxX - minX); const graphH = Math.max(1, maxY - minY);
-  const scale = Math.max(0.1, Math.min(4, Math.min((width - padding * 2) / graphW, (height - padding * 2) / graphH)));
+  const graphW = Math.max(1, maxX - minX);
+  const graphH = Math.max(1, maxY - minY);
+  const availW = Math.max(1, width - padding * 2);
+  const availH = Math.max(1, height - padding * 2);
+  // Don't clamp to a max — allow arbitrarily small scales so all nodes fit
+  const scale = Math.min(availW / graphW, availH / graphH);
   const tx = (width - graphW * scale) / 2 - minX * scale;
   const ty = (height - graphH * scale) / 2 - minY * scale;
   const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
@@ -730,17 +754,23 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
 
 function snapNodesToGrid(nodeData, svg, g, node, link) {
   if (!nodeData || nodeData.length === 0) return;
+
+  // Adaptive grid gaps: shrink for large node counts so the grid fits
+  const count = nodeData.length;
+  const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
+  const rowGap = count > 20 ? 260 : count > 12 ? 310 : GRID_SNAP_ROW_GAP;
+
   let minX = Infinity, minY = Infinity;
   nodeData.forEach(n => { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; });
   const sorted = [...nodeData].sort((a, b) =>
-    Math.round((a.y - minY) / GRID_SNAP_ROW_GAP) - Math.round((b.y - minY) / GRID_SNAP_ROW_GAP) ||
-    Math.round((a.x - minX) / GRID_SNAP_COL_GAP) - Math.round((b.x - minX) / GRID_SNAP_COL_GAP)
+    Math.round((a.y - minY) / rowGap) - Math.round((b.y - minY) / rowGap) ||
+    Math.round((a.x - minX) / colGap) - Math.round((b.x - minX) / colGap)
   );
   const totalCols = Math.max(1, Math.ceil(Math.sqrt(nodeData.length * 1.4)));
   const usedCells = new Set(); const cellOf = new Map();
   sorted.forEach(n => {
-    let col = Math.max(0, Math.round((n.x - minX) / GRID_SNAP_COL_GAP));
-    let row = Math.max(0, Math.round((n.y - minY) / GRID_SNAP_ROW_GAP));
+    let col = Math.max(0, Math.round((n.x - minX) / colGap));
+    let row = Math.max(0, Math.round((n.y - minY) / rowGap));
     let found = false;
     for (let radius = 0; radius < totalCols * 2 && !found; radius++) {
       for (let dc = -radius; dc <= radius && !found; dc++) {
@@ -757,18 +787,23 @@ function snapNodesToGrid(nodeData, svg, g, node, link) {
   nodeData.forEach(n => { cx += n.x; cy += n.y; }); cx /= nodeData.length; cy /= nodeData.length;
   const maxCol = Math.max(...[...cellOf.values()].map(c => c.col));
   const maxRow = Math.max(...[...cellOf.values()].map(c => c.row));
-  const gridOriginX = cx - (maxCol * GRID_SNAP_COL_GAP) / 2;
-  const gridOriginY = cy - (maxRow * GRID_SNAP_ROW_GAP) / 2;
+  const gridOriginX = cx - (maxCol * colGap) / 2;
+  const gridOriginY = cy - (maxRow * rowGap) / 2;
   nodeData.forEach(n => {
     const cell = cellOf.get(n.id); if (!cell) return;
-    n.x = gridOriginX + cell.col * GRID_SNAP_COL_GAP;
-    n.y = gridOriginY + cell.row * GRID_SNAP_ROW_GAP;
+    n.x = gridOriginX + cell.col * colGap;
+    n.y = gridOriginY + cell.row * rowGap;
     n.fx = null; n.fy = null;
   });
   node.attr("transform", d => `translate(${d.x},${d.y})`);
   link.attr("d", edgePath);
+  // Fit immediately (no animation) then animate a refined fit
   const container = document.getElementById("graph-container");
-  fitGraphToViewport(svg, window._zoomBehavior, nodeData, container.clientWidth, container.clientHeight, 56, true);
+  fitGraphToViewport(svg, window._zoomBehavior, nodeData, container.clientWidth, container.clientHeight, 20, false);
+  setTimeout(function() {
+    const c = document.getElementById("graph-container");
+    fitGraphToViewport(svg, window._zoomBehavior, nodeData, c.clientWidth, c.clientHeight, 20, true);
+  }, 50);
 }
 
 /**
@@ -781,8 +816,9 @@ function ensureAllNodesVisible(svg, zoomBehavior, nodeData) {
   const container = document.getElementById("graph-container");
   const width = container.clientWidth;
   const height = container.clientHeight;
-  const t = d3.zoomTransform(svg.node());
 
+  // Re-read the current transform and check if all node bounding boxes are inside
+  const t = d3.zoomTransform(svg.node());
   let allVisible = true;
   for (let i = 0; i < nodeData.length; i++) {
     const n = nodeData[i];
@@ -791,14 +827,13 @@ function ensureAllNodesVisible(svg, zoomBehavior, nodeData) {
     const sy1 = t.applyY(n.y - s.h / 2);
     const sx2 = t.applyX(n.x + s.w / 2);
     const sy2 = t.applyY(n.y + s.h / 2);
-    if (sx1 < 0 || sy1 < 0 || sx2 > width || sy2 > height) {
+    if (sx1 < -10 || sy1 < -10 || sx2 > width + 10 || sy2 > height + 10) {
       allVisible = false;
       break;
     }
   }
-
   if (!allVisible) {
-    fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, 72, true);
+    fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, 20, true);
   }
 }
 
@@ -974,7 +1009,6 @@ function renderGraph() {
   const svg = d3.select("#graph-svg");
   svg.selectAll("*").remove();
   svg.on(".detailnav", null);
-  d3.select("#zoom-svg").selectAll("*").remove();
 
   const container = document.getElementById("graph-container");
   const width = container.clientWidth;
@@ -1048,7 +1082,7 @@ function renderGraph() {
 
   const g = svg.append("g");
   const zoomBehavior = d3.zoom()
-    .scaleExtent([0.1, 4])
+    .scaleExtent([0.01, 4])
     .on("zoom", function(event) {
       g.attr("transform", event.transform);
       _overviewTransform = event.transform;
@@ -1115,7 +1149,8 @@ function renderGraph() {
   });
 
   function _initDetail() {
-    setTimeout(function() {
+    _pendingDetailTimeout = setTimeout(function() {
+      _pendingDetailTimeout = null;
       _overviewTransform = d3.zoomTransform(svg.node());
       initDetailView(svg, g, zoomBehavior, nodeData);
     }, 350);
@@ -1135,10 +1170,13 @@ function renderGraph() {
     });
     node.attr("transform", d => `translate(${d.x},${d.y})`);
     link.attr("d", edgePath);
-    fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, 56, false);
-    setTimeout(function() {
+    // Use current container dimensions, not the captured width/height
+    const ctr = document.getElementById("graph-container");
+    fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
+    var eid1 = setTimeout(function() {
       ensureAllNodesVisible(svg, zoomBehavior, nodeData);
-    }, 50);
+    }, 100);
+    _pendingEnsureTimeouts.push(eid1);
     svg.on("click", function() { selectedNode = null; clearHighlight(); });
     // Save to memory cache
     const memMap = new Map(nodeData.map(n => [n.id, { x: n.x, y: n.y }]));
@@ -1198,9 +1236,11 @@ function renderGraph() {
     function _saveAndSnap() {
       autoFitActive = false;
       snapNodesToGrid(nodeData, svg, g, node, link);
-      setTimeout(function() {
+      // Final safety check after grid snap animation
+      var eid2 = setTimeout(function() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
-      }, 320);
+      }, GRID_SNAP_DURATION + 100);
+      _pendingEnsureTimeouts.push(eid2);
       // Save to memory cache
       const posMap = new Map(nodeData.map(n => [n.id, { x: n.x, y: n.y }]));
       _positionCache.set(cacheKey, posMap);
