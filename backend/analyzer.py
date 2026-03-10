@@ -14,6 +14,66 @@ from typing import Optional
 from collections import defaultdict
 
 
+# ── Cache directory ─────────────────────────────────────────────────
+
+_VCA_CACHE_DIR = Path(__file__).parent.parent / ".vca_cache"
+
+
+def _ensure_cache_dir() -> Path:
+    _VCA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return _VCA_CACHE_DIR
+
+
+def _source_fingerprint(root_dir: str) -> str:
+    """Hash all .py file paths + contents under root_dir for cache invalidation."""
+    h = hashlib.sha256()
+    py_files = sorted(Path(root_dir).rglob("*.py"))
+    for py_file in py_files:
+        rel = os.path.relpath(str(py_file), root_dir)
+        if any(part.startswith(".") or part == "__pycache__" for part in Path(rel).parts):
+            continue
+        h.update(rel.encode())
+        try:
+            h.update(py_file.read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:20]
+
+
+def _cache_path(root_dir: str, abstract: bool, threshold: int) -> Path:
+    """Return the cache JSON file path for a given analysis config."""
+    dir_hash = hashlib.md5(os.path.abspath(root_dir).encode()).hexdigest()[:10]
+    tag = f"abs{threshold}" if abstract else "full"
+    return _ensure_cache_dir() / f"{dir_hash}_{tag}.json"
+
+
+def _load_from_cache(root_dir: str, abstract: bool, threshold: int) -> Optional[dict]:
+    """Try to load a cached analysis result. Returns None on miss or stale."""
+    path = _cache_path(root_dir, abstract, threshold)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("_fingerprint") == _source_fingerprint(root_dir):
+            return data.get("graph")
+    except (json.JSONDecodeError, OSError, KeyError):
+        pass
+    return None
+
+
+def _save_to_cache(root_dir: str, abstract: bool, threshold: int, graph_dict: dict) -> None:
+    """Persist an analysis result to disk."""
+    path = _cache_path(root_dir, abstract, threshold)
+    payload = {
+        "_fingerprint": _source_fingerprint(root_dir),
+        "graph": graph_dict,
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 # ── Graph data model ────────────────────────────────────────────────
 
 class NodeKind(str, Enum):
