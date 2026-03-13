@@ -479,6 +479,7 @@ const GRID_SNAP_DURATION = 600;
 let graphData = null;
 let rootGraphData = null;
 let fullGraphData = null;
+let intermediateGraphData = { nodes: [], edges: [] };  // multi-depth intermediates
 let graphStack = [];
 let currentGraphLabel = "Overview";
 let simulation = null;
@@ -584,6 +585,12 @@ async function loadGraph() {
     rootGraphData = await overviewResp.json();
     fullGraphData = await fullResp.json();
 
+    // Extract intermediate nodes/edges for multi-depth drill-down
+    intermediateGraphData = {
+      nodes: rootGraphData.intermediate_nodes || [],
+      edges: rootGraphData.intermediate_edges || [],
+    };
+
     document.getElementById("loading").style.display = "none";
     updateLegend(rootGraphData);
     _setGraphView(rootGraphData, "Overview");
@@ -623,45 +630,24 @@ function buildClassMethodGraph(classNode) {
 
 function buildMetaclassClassGraph(metaNode) {
   // The member_ids list contains the IDs of the nodes this metaclass replaced.
-  // Those members may be classes OR other metaclasses (from a lower hierarchy level).
-  // We look them up in the overview graph first (which has metaclasses from
-  // intermediate levels), then fall back to the full graph (original classes).
+  // Those members may be classes, other metaclasses, or group nodes from any
+  // hierarchy level.  We look them up across all available data sources:
+  //   1. fullGraphData     — original classes and methods
+  //   2. rootGraphData     — top-level metaclasses / groups
+  //   3. intermediateGraphData — collapsed intermediate-level nodes
   const memberIds = new Set((metaNode.member_ids || []));
 
-  // Build a comprehensive lookup of all known nodes across all graphs
-  // and all metaclass levels. We need this because intermediate-level
-  // metaclasses only exist in the overview graph.
+  // Build a comprehensive lookup of all known nodes across all levels
   const allAvailableNodes = new Map();
 
   // Full graph has all original classes and methods
   fullGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
 
-  // Overview graph has metaclasses (which may themselves contain other metaclasses)
+  // Overview graph has top-level metaclasses
   rootGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
 
-  // Also check if any member is itself a metaclass in the overview graph
-  // whose member_ids reference nodes we need to find
-  // (This handles the case where a metaclass was collapsed at an intermediate level
-  // and no longer appears in either rootGraphData or fullGraphData directly,
-  // because it was further collapsed into a higher-level metaclass)
-  function findMembersRecursively(nodeMap) {
-    // For any metaclass in the overview graph, its members might reference
-    // nodes that were themselves collapsed. We collect all intermediate
-    // metaclasses we can find.
-    rootGraphData.nodes.forEach(n => {
-      if (n.kind === "metaclass" && n.member_ids) {
-        n.member_ids.forEach(mid => {
-          // If this intermediate metaclass's member is one of our target members
-          // we need to make sure that intermediate node is available
-          if (!nodeMap.has(n.id)) {
-            nodeMap.set(n.id, n);
-          }
-        });
-      }
-    });
-  }
-
-  findMembersRecursively(allAvailableNodes);
+  // Intermediate graph has collapsed nodes from all hierarchy levels
+  intermediateGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
 
   const nodes = [];
   memberIds.forEach(mid => {
@@ -682,13 +668,13 @@ function buildMetaclassClassGraph(metaNode) {
 
   const nodeIds = new Set(nodes.map(n => n.id));
 
-  // Collect edges between members from both graphs
+  // Collect edges between members from all graph sources
   const edgeKey = e => `${_nid(e.source)}|${_nid(e.target)}|${e.kind}`;
   const seenEdges = new Set();
   const edges = [];
 
-  function addEdgesFrom(sourceGraph) {
-    sourceGraph.edges.forEach(e => {
+  function addEdgesFrom(sourceEdges) {
+    sourceEdges.forEach(e => {
       const s = _nid(e.source), t = _nid(e.target);
       if (nodeIds.has(s) && nodeIds.has(t) && e.kind !== "contains") {
         const key = edgeKey(e);
@@ -700,20 +686,23 @@ function buildMetaclassClassGraph(metaNode) {
     });
   }
 
-  addEdgesFrom(rootGraphData);
-  addEdgesFrom(fullGraphData);
+  addEdgesFrom(rootGraphData.edges);
+  addEdgesFrom(fullGraphData.edges);
+  addEdgesFrom(intermediateGraphData.edges);
 
   return { nodes, edges };
 }
 
 function buildGroupGraph(groupNode) {
   // Heuristic group nodes (Tests, Data Models, etc.) hold member_ids
-  // pointing to the original class nodes in the full graph.
+  // pointing to nodes that may live in fullGraphData, rootGraphData,
+  // or intermediateGraphData (if they were collapsed at a higher level).
   const memberIds = new Set((groupNode.member_ids || []));
 
   const allAvailableNodes = new Map();
   fullGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
   rootGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
+  intermediateGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
 
   const nodes = [];
   memberIds.forEach(mid => {
@@ -727,8 +716,8 @@ function buildGroupGraph(groupNode) {
   const seenEdges = new Set();
   const edges = [];
 
-  function addEdgesFrom(sourceGraph) {
-    sourceGraph.edges.forEach(e => {
+  function addEdgesFrom(sourceEdges) {
+    sourceEdges.forEach(e => {
       const s = _nid(e.source), t = _nid(e.target);
       if (nodeIds.has(s) && nodeIds.has(t) && e.kind !== "contains") {
         const key = edgeKey(e);
@@ -740,8 +729,9 @@ function buildGroupGraph(groupNode) {
     });
   }
 
-  addEdgesFrom(fullGraphData);
-  addEdgesFrom(rootGraphData);
+  addEdgesFrom(fullGraphData.edges);
+  addEdgesFrom(rootGraphData.edges);
+  addEdgesFrom(intermediateGraphData.edges);
 
   return { nodes, edges };
 }

@@ -127,6 +127,9 @@ class Edge:
 class Graph:
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
+    # Nodes/edges from intermediate hierarchy levels (for multi-depth drill-down)
+    intermediate_nodes: list[Node] = field(default_factory=list)
+    intermediate_edges: list[Edge] = field(default_factory=list)
 
     def add_node(self, node: Node) -> None:
         if not any(n.id == node.id for n in self.nodes):
@@ -140,10 +143,15 @@ class Graph:
         self.edges.append(edge)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "nodes": [_node_to_dict(n) for n in self.nodes],
             "edges": [_edge_to_dict(e) for e in self.edges],
         }
+        if self.intermediate_nodes:
+            d["intermediate_nodes"] = [_node_to_dict(n) for n in self.intermediate_nodes]
+        if self.intermediate_edges:
+            d["intermediate_edges"] = [_edge_to_dict(e) for e in self.intermediate_edges]
+        return d
 
 
 def _node_to_dict(n: Node) -> dict:
@@ -756,6 +764,7 @@ def _collapse_communities(
     """
     Collapse each community into a single metaclass node.
     Returns a new graph with communities replaced by metaclass nodes.
+    Tracks collapsed nodes/edges as intermediates for multi-depth drill-down.
     """
     node_by_id: dict[str, Node] = {n.id: n for n in graph.nodes}
 
@@ -769,6 +778,10 @@ def _collapse_communities(
     for e in graph.edges:
         if e.kind == EdgeKind.CONTAINS:
             class_to_methods[e.source].add(e.target)
+
+    # Intermediate data: save collapsed nodes and their internal edges
+    new_intermediate_nodes: list[Node] = []
+    new_intermediate_edges: list[Edge] = []
 
     for community in communities:
         # Generate a stable ID from sorted member IDs
@@ -786,15 +799,33 @@ def _collapse_communities(
         else:
             group_label = member_names[0] if member_names else "group"
 
-        # If all members are metaclasses, name differently
-        all_meta = all(
-            node_by_id[nid].kind == NodeKind.METACLASS
+        # Determine naming based on member kinds
+        member_kinds = {
+            node_by_id[nid].kind for nid in sorted_ids if nid in node_by_id
+        }
+        all_group_or_meta = all(
+            node_by_id[nid].kind in _GROUPABLE_META_KINDS
             for nid in sorted_ids if nid in node_by_id
         )
-        if all_meta:
-            name = f"{group_label} (group)"
+
+        if len(member_kinds) == 1:
+            single_kind = next(iter(member_kinds))
+            if single_kind in _GROUP_KIND_LABEL:
+                kind_label = _GROUP_KIND_LABEL[single_kind]
+                name = f"All {kind_label} ({len(member_names)} groups)"
+                docstring = f"Hierarchical grouping of {len(member_names)} {kind_label.lower()} sub-groups"
+            elif single_kind == NodeKind.METACLASS:
+                name = f"{group_label} ({len(member_names)} groups)"
+                docstring = f"Community of {len(member_names)} tightly-coupled groups"
+            else:
+                name = f"{group_label} ({len(member_names)} classes)"
+                docstring = f"Community of {len(member_names)} tightly-coupled nodes"
+        elif all_group_or_meta:
+            name = f"{group_label} ({len(member_names)} groups)"
+            docstring = f"Community of {len(member_names)} tightly-coupled groups"
         else:
             name = f"{group_label} ({len(member_names)} classes)"
+            docstring = f"Community of {len(member_names)} tightly-coupled nodes"
 
         meta_node = Node(
             id=meta_id,
@@ -806,10 +837,22 @@ def _collapse_communities(
             line_end=0,
             members=member_names,
             member_ids=sorted_ids,
-            docstring=f"Community of {len(member_names)} tightly-coupled nodes",
+            docstring=docstring,
             depth=depth,
         )
         meta_nodes.append(meta_node)
+
+        # Save collapsed nodes as intermediates for drill-down
+        for nid in sorted_ids:
+            if nid in node_by_id:
+                new_intermediate_nodes.append(node_by_id[nid])
+
+        # Save internal edges (both endpoints in same community) as intermediates
+        for e in graph.edges:
+            if e.kind == EdgeKind.CONTAINS:
+                continue
+            if e.source in community and e.target in community:
+                new_intermediate_edges.append(e)
 
         for nid in community:
             collapsed_ids.add(nid)
@@ -849,6 +892,10 @@ def _collapse_communities(
             continue
 
         out.add_edge(Edge(source=s, target=t, kind=e.kind, label=e.label))
+
+    # Carry forward existing intermediates + add newly collapsed
+    out.intermediate_nodes = list(graph.intermediate_nodes) + new_intermediate_nodes
+    out.intermediate_edges = list(graph.intermediate_edges) + new_intermediate_edges
 
     return out
 
@@ -912,6 +959,23 @@ _CATEGORY_LABEL: dict[str, str] = {
     "utility":   "Utilities",
     "exception": "Exceptions & Warnings",
     "event":     "Events & Signals",
+}
+
+# Kinds that represent groups/metaclasses (eligible for higher-level grouping)
+_GROUPABLE_META_KINDS: set[NodeKind] = {NodeKind.METACLASS} | {
+    k for k in NodeKind if k.value.endswith("_group")
+}
+
+# Human-readable label for each group kind (used when naming higher-level groups)
+_GROUP_KIND_LABEL: dict[NodeKind, str] = {
+    NodeKind.TEST_GROUP:      "Tests",
+    NodeKind.MODEL_GROUP:     "Data Models",
+    NodeKind.CONFIG_GROUP:    "Configuration",
+    NodeKind.HANDLER_GROUP:   "Services & Handlers",
+    NodeKind.UTILITY_GROUP:   "Utilities",
+    NodeKind.EXCEPTION_GROUP: "Exceptions & Warnings",
+    NodeKind.EVENT_GROUP:     "Events & Signals",
+    NodeKind.METACLASS:       "Groups",
 }
 
 
@@ -1211,6 +1275,81 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
 
 
 
+def _find_metanode_groups(
+    graph: Graph,
+    min_group_size: int = 3,
+) -> list[set[str]]:
+    """
+    Find groups of metanodes / *_group nodes that can be collapsed into
+    higher-level metaclass nodes.
+
+    Grouping strategies (applied in priority order):
+    1. Same kind  (e.g. all test_group → "All Tests")
+    2. Same parent directory for remaining ungrouped metanodes
+    """
+    groupable = [n for n in graph.nodes if n.kind in _GROUPABLE_META_KINDS]
+    if len(groupable) < min_group_size:
+        return []
+
+    groups: list[set[str]] = []
+    already_grouped: set[str] = set()
+
+    # ── Strategy 1: group by same kind ──────────────────────────────
+    kind_buckets: dict[NodeKind, list[str]] = defaultdict(list)
+    for n in groupable:
+        kind_buckets[n.kind].append(n.id)
+
+    for kind, ids in sorted(kind_buckets.items(), key=lambda x: -len(x[1])):
+        available = [i for i in ids if i not in already_grouped]
+        if len(available) >= min_group_size:
+            groups.append(set(available))
+            already_grouped.update(available)
+
+    # ── Strategy 2: group remaining by common parent directory ──────
+    dir_buckets: dict[str, list[str]] = defaultdict(list)
+    for n in groupable:
+        if n.id not in already_grouped:
+            parent_dir = os.path.dirname(n.file_path) if n.file_path else ""
+            dir_buckets[parent_dir].append(n.id)
+
+    for dir_path, ids in sorted(dir_buckets.items(), key=lambda x: -len(x[1])):
+        if len(ids) >= min_group_size:
+            groups.append(set(ids))
+            already_grouped.update(ids)
+
+    return groups
+
+
+def _apply_min_top_nodes_filter(
+    groups: list[set[str]],
+    all_node_ids: set[str],
+    min_top_nodes: int,
+) -> list[set[str]]:
+    """Drop smallest groups until collapsing won't leave fewer than min_top_nodes."""
+    if not groups:
+        return groups
+
+    nodes_being_collapsed: set[str] = set()
+    for g in groups:
+        nodes_being_collapsed |= g
+
+    remaining = all_node_ids - nodes_being_collapsed
+    new_top_count = len(remaining) + len(groups)
+
+    if new_top_count >= min_top_nodes:
+        return groups
+
+    # Sort largest first, drop from the tail
+    groups = sorted(groups, key=len, reverse=True)
+    while groups and new_top_count < min_top_nodes:
+        dropped = groups.pop()
+        nodes_being_collapsed -= dropped
+        remaining = all_node_ids - nodes_being_collapsed
+        new_top_count = len(remaining) + len(groups)
+
+    return groups
+
+
 def abstract_graph(
     graph: Graph,
     max_bridge_edges: int = 2,
@@ -1223,7 +1362,13 @@ def abstract_graph(
     Recursively detect tightly-coupled communities and collapse them into
     metaclass nodes.  ALL class nodes are first grouped by naming / path /
     base-class heuristics (sub-grouped by source file for cohesion).
-    Remaining nodes are then processed by graph-based community detection.
+
+    Then a multi-pass loop alternates between:
+      A) graph-based community detection (edge connectivity)
+      B) heuristic meta-grouping (same kind / same directory)
+
+    This enables multiple depth levels: metanodes can themselves become
+    members of higher-level metanodes.
 
     Communities are capped at `max_community_size` nodes so the overview
     stays navigable.  Larger clusters are subdivided and the hierarchical
@@ -1240,49 +1385,48 @@ def abstract_graph(
     depth = 0
 
     while depth < max_depth:
-        # Consider class, metaclass, and heuristic-group nodes
+        made_progress = False
+
+        # ── Strategy A: edge-based community detection ──────────────
         candidate_ids = {
             n.id for n in current.nodes
             if n.kind in _GROUPABLE_KINDS
         }
 
-        if len(candidate_ids) < min_community_size:
-            break
+        if len(candidate_ids) >= min_community_size:
+            communities = _find_communities(
+                candidate_ids,
+                current.edges,
+                max_bridge_edges=max_bridge_edges,
+                min_community_size=min_community_size,
+                max_community_size=max_community_size,
+            )
 
-        communities = _find_communities(
-            candidate_ids,
-            current.edges,
-            max_bridge_edges=max_bridge_edges,
-            min_community_size=min_community_size,
-            max_community_size=max_community_size,
+            communities = _apply_min_top_nodes_filter(
+                communities, candidate_ids, min_top_nodes,
+            )
+
+            if communities:
+                depth += 1
+                current = _collapse_communities(current, communities, depth)
+                made_progress = True
+                continue  # re-enter loop — new communities may have formed
+
+        # ── Strategy B: heuristic meta-grouping ─────────────────────
+        meta_groups = _find_metanode_groups(current, min_community_size)
+
+        all_node_ids = {n.id for n in current.nodes}
+        meta_groups = _apply_min_top_nodes_filter(
+            meta_groups, all_node_ids, min_top_nodes,
         )
 
-        if not communities:
+        if meta_groups:
+            depth += 1
+            current = _collapse_communities(current, meta_groups, depth)
+            made_progress = True
+
+        if not made_progress:
             break
-
-        # Check: would collapsing leave too few nodes at the top level?
-        nodes_being_collapsed = set()
-        for c in communities:
-            nodes_being_collapsed |= c
-
-        remaining_candidates = candidate_ids - nodes_being_collapsed
-        new_top_count = len(remaining_candidates) + len(communities)
-
-        if new_top_count < min_top_nodes:
-            # Try with fewer communities — drop the smallest ones until we fit
-            communities.sort(key=lambda c: len(c), reverse=True)
-            while communities and new_top_count < min_top_nodes:
-                dropped = communities.pop()
-                nodes_being_collapsed -= dropped
-                remaining_candidates = candidate_ids - nodes_being_collapsed
-                new_top_count = len(remaining_candidates) + len(communities)
-
-        if not communities:
-            break
-
-        depth += 1
-        current = _collapse_communities(current, communities, depth)
-
 
     return current
 
