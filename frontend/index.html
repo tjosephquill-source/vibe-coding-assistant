@@ -1136,7 +1136,7 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
     _zoomDetailTransform = initTransform;
   }
 
-  // Add clickable node hit-layer in detail view (bottom): click here drills
+  // Add clickable/hoverable node hit-layer in detail view (bottom): hover highlights, click drills
   const hitLayer = zoomG.append("g").attr("class", "detail-hit-layer");
 
   hitLayer.selectAll("g")
@@ -1151,6 +1151,13 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
     .attr("fill", "transparent")
     .style("pointer-events", "all")
     .style("cursor", "pointer")
+    .on("mouseenter", function(event, d) {
+      event.stopPropagation();
+      highlightConnected(d);
+    })
+    .on("mouseleave", function() {
+      clearHighlight();
+    })
     .on("click", function(event, d) {
       event.stopPropagation();
       drillIntoNode(d);
@@ -1159,6 +1166,9 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   // Add the viewport indicator rect to the overview SVG (on top of everything)
   _viewportRect = overviewSvg.append("rect").attr("class", "viewport-rect");
   updateViewportIndicator();
+
+  // Click on detail background clears highlight
+  zoomSvg.on("click.clearhighlight", function() { clearHighlight(); });
 
   // Click on overview background to recenter the detail view
   overviewSvg.on("click.detailnav", function(event) {
@@ -1271,12 +1281,41 @@ function renderGraph() {
     });
 
   svg.call(zoomBehavior);
+  // Disable D3's default zoom gestures on the overview (it's a minimap)
   svg.on("wheel.zoom", null)
      .on("dblclick.zoom", null)
      .on("mousedown.zoom", null)
      .on("touchstart.zoom", null)
      .on("touchmove.zoom", null)
      .on("touchend.zoom", null);
+
+  // Forward scroll-wheel on the overview to zoom the detail panel
+  svg.on("wheel.forwardZoom", function(event) {
+    if (!_zoomSvg || !_zoomDetailBehavior || !_zoomDetailTransform) return;
+    event.preventDefault();
+
+    // Convert mouse position to graph-space via the overview transform
+    const overviewT = d3.zoomTransform(svg.node());
+    const [mx, my] = d3.pointer(event, svg.node());
+    const graphX = overviewT.invertX(mx);
+    const graphY = overviewT.invertY(my);
+
+    // Scale factor proportional to scroll magnitude (normalised across browsers)
+    const delta = -event.deltaY * (event.deltaMode === 1 ? 40 : 1) / 300;
+    const factor = Math.pow(2, delta);
+    const newK = Math.min(10, Math.max(0.1, _zoomDetailTransform.k * factor));
+
+    // Center the detail view on the graph point under the cursor
+    const zoomContainer = document.getElementById("zoom-container");
+    const zw = zoomContainer.clientWidth;
+    const zh = zoomContainer.clientHeight;
+    const dtx = zw / 2 - graphX * newK;
+    const dty = zh / 2 - graphY * newK;
+    const t = d3.zoomIdentity.translate(dtx, dty).scale(newK);
+
+    // Apply instantly — no transition — for snappy response
+    _zoomSvg.call(_zoomDetailBehavior.transform, t);
+  });
 
   window._zoomBehavior = zoomBehavior;
 
@@ -1285,6 +1324,8 @@ function renderGraph() {
     .data(linkData).join("path")
     .attr("id", d => d._pathId)
     .attr("class", d => `edge ${d.kind}`)
+    .attr("data-edge-src", d => _nid(d.source))
+    .attr("data-edge-tgt", d => _nid(d.target))
     .attr("marker-end", d => `url(#arrow-${d.kind})`)
     .attr("marker-start", d => d.kind === "contains" ? `url(#diamond-contains-end)` : null);
 
@@ -1292,6 +1333,7 @@ function renderGraph() {
   const node = g.append("g").selectAll("g")
     .data(nodeData).join("g")
     .attr("class", "node-group")
+    .attr("data-node-id", d => d.id)
     .on("mouseenter", function(event, d) { event.stopPropagation(); highlightConnected(d); })
     .on("mouseleave", function() { clearHighlight(); })
     .on("click", function(event, d) {
@@ -1570,6 +1612,8 @@ function highlightConnected(d) {
     if (sid === d.id) connectedIds.add(tid);
     if (tid === d.id) connectedIds.add(sid);
   });
+
+  // ── Overview panel (top) ──────────────────────────────────────
   window._nodes.selectAll(".node-rect")
     .style("opacity", n => connectedIds.has(n.id) ? 1 : 0.15)
     .style("filter", n => n.id === d.id ? "brightness(1.2) drop-shadow(0 0 8px)" : null);
@@ -1579,15 +1623,49 @@ function highlightConnected(d) {
     const sid = _nid(e.source), tid = _nid(e.target);
     return (sid === d.id || tid === d.id) ? 0.9 : 0.05;
   });
+
+  // ── Detail panel (bottom) — cloned DOM, no D3 data ────────────
+  const zoomSvg = d3.select("#zoom-svg");
+  zoomSvg.selectAll(".node-group").each(function() {
+    const el = d3.select(this);
+    const nid = el.attr("data-node-id");
+    if (!nid) return;
+    const isConn = connectedIds.has(nid);
+    const isFocus = nid === d.id;
+    el.selectAll(".node-rect")
+      .style("opacity", isConn ? 1 : 0.15)
+      .style("filter", isFocus ? "brightness(1.2) drop-shadow(0 0 8px)" : null);
+    el.selectAll(".node-title").style("opacity", isConn ? 1 : 0.15);
+    el.selectAll(".node-kind-inside").style("opacity", isConn ? 1 : 0.15);
+  });
+  zoomSvg.selectAll("[data-edge-src]").each(function() {
+    const el = d3.select(this);
+    const sid = el.attr("data-edge-src"), tid = el.attr("data-edge-tgt");
+    el.style("opacity", (sid === d.id || tid === d.id) ? 0.9 : 0.05);
+  });
+
   populatePanel(d);
 }
 
 function clearHighlight() {
   if (!window._nodes || !window._links) return;
+
+  // ── Overview panel (top) ──────────────────────────────────────
   window._nodes.selectAll(".node-rect").style("filter", null).style("opacity", 1);
   window._nodes.selectAll(".node-title").style("opacity", 1);
   window._nodes.selectAll(".node-kind-inside").style("opacity", 1);
   window._links.style("opacity", 0.5);
+
+  // ── Detail panel (bottom) ─────────────────────────────────────
+  const zoomSvg = d3.select("#zoom-svg");
+  zoomSvg.selectAll(".node-group").each(function() {
+    const el = d3.select(this);
+    el.selectAll(".node-rect").style("filter", null).style("opacity", 1);
+    el.selectAll(".node-title").style("opacity", 1);
+    el.selectAll(".node-kind-inside").style("opacity", 1);
+  });
+  zoomSvg.selectAll("[data-edge-src]").style("opacity", 0.5);
+
   showPlaceholder();
 }
 
