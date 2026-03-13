@@ -28,21 +28,21 @@ app.add_middleware(
 _graph_cache: dict[str, dict] = {}
 
 
-def _cache_key(repo_path: str, abstract: bool, abstract_threshold: int) -> str:
-    return f"{os.path.abspath(repo_path)}|{int(abstract)}|{abstract_threshold}"
+def _cache_key(repo_path: str, abstract: bool) -> str:
+    return f"{os.path.abspath(repo_path)}|{int(abstract)}"
 
 
-def _get_or_analyze(repo_path: str, abstract: bool, abstract_threshold: int) -> dict:
+def _get_or_analyze(repo_path: str, abstract: bool) -> dict:
     """Return graph dict from memory cache → disk cache → fresh analysis."""
     abs_path = os.path.abspath(repo_path)
-    key = _cache_key(abs_path, abstract, abstract_threshold)
+    key = _cache_key(abs_path, abstract)
 
     # 1. Memory cache
     if key in _graph_cache:
         return _graph_cache[key]
 
     # 2. Disk cache
-    cached = _load_from_cache(abs_path, abstract, abstract_threshold)
+    cached = _load_from_cache(abs_path, abstract)
     if cached is not None:
         _graph_cache[key] = cached
         return cached
@@ -50,11 +50,11 @@ def _get_or_analyze(repo_path: str, abstract: bool, abstract_threshold: int) -> 
     # 3. Fresh analysis
     graph = analyze_codebase(abs_path)
     if abstract:
-        graph = abstract_graph(graph, threshold=abstract_threshold)
+        graph = abstract_graph(graph)
 
     payload = graph.to_dict()
     _graph_cache[key] = payload
-    _save_to_cache(abs_path, abstract, abstract_threshold, payload)
+    _save_to_cache(abs_path, abstract, payload)
     return payload
 
 
@@ -68,21 +68,19 @@ def chrome_devtools_probe():
 def analyze(
     repo_path: str = Query(default="mock_codebase"),
     abstract: bool = Query(default=False),
-    abstract_threshold: int = Query(default=8, ge=2, le=500),
 ):
     """Analyze a codebase and cache the resulting graph."""
     abs_path = os.path.abspath(repo_path)
     if not os.path.isdir(abs_path):
         return JSONResponse({"error": f"Directory not found: {abs_path}"}, status_code=400)
 
-    payload = _get_or_analyze(abs_path, abstract, abstract_threshold)
+    payload = _get_or_analyze(abs_path, abstract)
     return {"status": "ok", "nodes": len(payload["nodes"]), "edges": len(payload["edges"])}
 
 
 @app.get("/api/graph")
 def get_graph(
     abstract: bool = Query(default=False),
-    abstract_threshold: int = Query(default=8, ge=2, le=500),
 ):
     """Return a cached graph (or auto-analyze mock_codebase2)."""
     mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
@@ -92,7 +90,7 @@ def get_graph(
     if not os.path.isdir(abs_path):
         return JSONResponse({"error": "No analysis run yet. POST /api/analyze first."}, status_code=404)
 
-    payload = _get_or_analyze(abs_path, abstract, abstract_threshold)
+    payload = _get_or_analyze(abs_path, abstract)
     return payload
 
 

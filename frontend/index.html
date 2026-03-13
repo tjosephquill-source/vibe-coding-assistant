@@ -135,6 +135,8 @@
   .node-rect.class  { fill: #1f6feb; stroke: #58a6ff; }
   .node-rect.method { fill: #8957e5; stroke: #b392f0; }
   .node-rect.metaclass { fill: #b08900; stroke: #e3b341; }
+  .node-rect.test_group { fill: #196c2e; stroke: #3fb950; }
+  .node-rect.semantic_group { fill: #553098; stroke: #a371f7; }
 
   .node-title {
     font-size: 15px;
@@ -216,6 +218,11 @@
   .kind-tag.class    { background: #58a6ff33; color: #58a6ff; }
   .kind-tag.method   { background: #d2a8ff33; color: #d2a8ff; }
   .kind-tag.metaclass { background: #e3b34133; color: #e3b341; }
+  .kind-tag.test_group    { background: #3fb95033; color: #3fb950; }
+  .kind-tag.model_group   { background: #388bfd33; color: #388bfd; }
+  .kind-tag.config_group  { background: #d4a72c33; color: #d4a72c; }
+  .kind-tag.handler_group { background: #f4706733; color: #f47067; }
+  .kind-tag.utility_group { background: #39d3bb33; color: #39d3bb; }
 
   #detail-panel .detail-section {
     margin-top: 14px;
@@ -357,16 +364,7 @@
 </div>
 
 <div id="legend">
-  <h4>Nodes</h4>
-  <div class="legend-item"><div class="legend-node" style="border-color:#58a6ff; background:#58a6ff22"></div> Class</div>
-  <div class="legend-item"><div class="legend-node" style="border-color:#d2a8ff; background:#d2a8ff22"></div> Method</div>
-  <div class="legend-item"><div class="legend-node" style="border-color:#e3b341; background:#e3b34122"></div> Metaclass</div>
-  <h4 style="margin-top: 10px">Edges</h4>
-  <div class="legend-item"><div class="legend-edge" style="border-color:#f97583"></div> Inherits</div>
-  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#8b949e"></div> Imports</div>
-  <div class="legend-item"><div class="legend-edge dotted" style="border-color:#484f58"></div> Contains</div>
-  <div class="legend-item"><div class="legend-edge" style="border-color:#d2a8ff"></div> Instantiates</div>
-  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#7ee787"></div> Uses Type</div>
+  <!-- populated dynamically by updateLegend() -->
 </div>
 
 <div id="loading">Analyzing codebase…</div>
@@ -374,7 +372,6 @@
 <script>
 const API_BASE = window.location.origin;
 const ABSTRACT_NODES = true;
-const ABSTRACT_THRESHOLD = 6;
 
 // ── Position cache ─────────────────────────────────────────────────
 const _positionCache = new Map();
@@ -433,9 +430,21 @@ async function _loadPositionsFromDisk(nodeData) {
 const NODE_SIZE = {
   class: { w: 240, h: 158 },
   method: { w: 190, h: 70 },
-  metaclass: { w: 300, h: 210 }
+  metaclass: { w: 300, h: 210 },
+  test_group:      { w: 240, h: 160 },
+  model_group:     { w: 240, h: 160 },
+  config_group:    { w: 240, h: 160 },
+  handler_group:   { w: 240, h: 160 },
+  utility_group:   { w: 240, h: 160 },
+  exception_group: { w: 240, h: 160 },
+  event_group:     { w: 240, h: 160 },
 };
-const NODE_CHARGE = { class: -950, method: -420, metaclass: -1300 };
+const NODE_CHARGE = {
+  class: -950, method: -420, metaclass: -1300,
+  test_group: -700, model_group: -700, config_group: -700,
+  handler_group: -700, utility_group: -700,
+  exception_group: -700, event_group: -700,
+};
 const EDGE_DISTANCE = {
   contains: 130,
   inherits: 260,
@@ -475,8 +484,41 @@ let currentGraphLabel = "Overview";
 let simulation = null;
 let selectedNode = null;
 
-const activeNodeKinds = new Set(["class", "method", "metaclass"]);
+const activeNodeKinds = new Set(["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 const activeEdgeKinds = new Set(["inherits", "imports", "contains", "instantiates", "uses_type", "calls"]);
+
+// ── Legend metadata ────────────────────────────────────────────────
+const NODE_KIND_META = {
+  class:           { label: "Class",                 border: "#58a6ff", bg: "#58a6ff22" },
+  method:          { label: "Method",                border: "#d2a8ff", bg: "#d2a8ff22" },
+  metaclass:       { label: "Metaclass",             border: "#e3b341", bg: "#e3b34122" },
+  test_group:      { label: "Tests",                 border: "#3fb950", bg: "#3fb95022" },
+  model_group:     { label: "Data Models",           border: "#388bfd", bg: "#388bfd22" },
+  config_group:    { label: "Configuration",         border: "#d4a72c", bg: "#d4a72c22" },
+  handler_group:   { label: "Services & Handlers",   border: "#f47067", bg: "#f4706722" },
+  utility_group:   { label: "Utilities",             border: "#39d3bb", bg: "#39d3bb22" },
+  exception_group: { label: "Exceptions & Warnings", border: "#f0883e", bg: "#f0883e22" },
+  event_group:     { label: "Events & Signals",      border: "#6e7cf7", bg: "#6e7cf722" },
+};
+const NODE_KIND_ORDER = ["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+
+function updateLegend(graphData) {
+  const presentKinds = new Set((graphData.nodes || []).map(n => n.kind));
+  let html = "<h4>Nodes</h4>";
+  for (const kind of NODE_KIND_ORDER) {
+    if (!presentKinds.has(kind)) continue;
+    const m = NODE_KIND_META[kind];
+    if (!m) continue;
+    html += `<div class="legend-item"><div class="legend-node" style="border-color:${m.border}; background:${m.bg}"></div> ${m.label}</div>`;
+  }
+  html += `<h4 style="margin-top:10px">Edges</h4>
+  <div class="legend-item"><div class="legend-edge" style="border-color:#f97583"></div> Inherits</div>
+  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#8b949e"></div> Imports</div>
+  <div class="legend-item"><div class="legend-edge dotted" style="border-color:#484f58"></div> Contains</div>
+  <div class="legend-item"><div class="legend-edge" style="border-color:#d2a8ff"></div> Instantiates</div>
+  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#7ee787"></div> Uses Type</div>`;
+  document.getElementById("legend").innerHTML = html;
+}
 
 // ── Zoom detail view state ─────────────────────────────────────────
 let _zoomDetailTransform = null;
@@ -533,8 +575,8 @@ function cleanupDetailView() {
 async function loadGraph() {
   try {
     const [overviewResp, fullResp] = await Promise.all([
-      fetch(`${API_BASE}/api/graph?abstract=${ABSTRACT_NODES ? "true" : "false"}&abstract_threshold=${ABSTRACT_THRESHOLD}`),
-      fetch(`${API_BASE}/api/graph?abstract=false&abstract_threshold=${ABSTRACT_THRESHOLD}`)
+      fetch(`${API_BASE}/api/graph?abstract=${ABSTRACT_NODES ? "true" : "false"}`),
+      fetch(`${API_BASE}/api/graph?abstract=false`)
     ]);
     if (!overviewResp.ok) throw new Error(`HTTP ${overviewResp.status}`);
     if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
@@ -543,6 +585,7 @@ async function loadGraph() {
     fullGraphData = await fullResp.json();
 
     document.getElementById("loading").style.display = "none";
+    updateLegend(rootGraphData);
     _setGraphView(rootGraphData, "Overview");
   } catch (err) {
     document.getElementById("loading").textContent = `Error: ${err.message}`;
@@ -560,6 +603,7 @@ function _setGraphView(nextGraph, label) {
   graphData = nextGraph;
   currentGraphLabel = label || "Overview";
   updateBackButton();
+  updateLegend(graphData);
   document.getElementById("detail-panel").classList.remove("open");
   renderGraph();
 }
@@ -578,18 +622,131 @@ function buildClassMethodGraph(classNode) {
 }
 
 function buildMetaclassClassGraph(metaNode) {
+  // The member_ids list contains the IDs of the nodes this metaclass replaced.
+  // Those members may be classes OR other metaclasses (from a lower hierarchy level).
+  // We look them up in the overview graph first (which has metaclasses from
+  // intermediate levels), then fall back to the full graph (original classes).
   const memberIds = new Set((metaNode.member_ids || []));
-  const membersByName = new Set((metaNode.members || []));
-  const nodes = fullGraphData.nodes.filter(n =>
-    n.kind === "class" && (memberIds.has(n.id) || membersByName.has(n.name))
-  );
-  const nodeIds = new Set(nodes.map(n => n.id));
-  const edges = fullGraphData.edges.filter(e => {
-    const s = _nid(e.source), t = _nid(e.target);
-    return nodeIds.has(s) && nodeIds.has(t) && e.kind !== "contains";
+
+  // Build a comprehensive lookup of all known nodes across all graphs
+  // and all metaclass levels. We need this because intermediate-level
+  // metaclasses only exist in the overview graph.
+  const allAvailableNodes = new Map();
+
+  // Full graph has all original classes and methods
+  fullGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
+
+  // Overview graph has metaclasses (which may themselves contain other metaclasses)
+  rootGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
+
+  // Also check if any member is itself a metaclass in the overview graph
+  // whose member_ids reference nodes we need to find
+  // (This handles the case where a metaclass was collapsed at an intermediate level
+  // and no longer appears in either rootGraphData or fullGraphData directly,
+  // because it was further collapsed into a higher-level metaclass)
+  function findMembersRecursively(nodeMap) {
+    // For any metaclass in the overview graph, its members might reference
+    // nodes that were themselves collapsed. We collect all intermediate
+    // metaclasses we can find.
+    rootGraphData.nodes.forEach(n => {
+      if (n.kind === "metaclass" && n.member_ids) {
+        n.member_ids.forEach(mid => {
+          // If this intermediate metaclass's member is one of our target members
+          // we need to make sure that intermediate node is available
+          if (!nodeMap.has(n.id)) {
+            nodeMap.set(n.id, n);
+          }
+        });
+      }
+    });
+  }
+
+  findMembersRecursively(allAvailableNodes);
+
+  const nodes = [];
+  memberIds.forEach(mid => {
+    const n = allAvailableNodes.get(mid);
+    if (n) nodes.push(n);
   });
+
+  // If we found no nodes, the members might have been further collapsed.
+  // Try to find them by scanning all metaclasses for matching member_ids.
+  if (nodes.length === 0 && memberIds.size > 0) {
+    // Fallback: look for any node whose id matches
+    fullGraphData.nodes.forEach(n => {
+      if (memberIds.has(n.id) && !nodes.find(x => x.id === n.id)) {
+        nodes.push(n);
+      }
+    });
+  }
+
+  const nodeIds = new Set(nodes.map(n => n.id));
+
+  // Collect edges between members from both graphs
+  const edgeKey = e => `${_nid(e.source)}|${_nid(e.target)}|${e.kind}`;
+  const seenEdges = new Set();
+  const edges = [];
+
+  function addEdgesFrom(sourceGraph) {
+    sourceGraph.edges.forEach(e => {
+      const s = _nid(e.source), t = _nid(e.target);
+      if (nodeIds.has(s) && nodeIds.has(t) && e.kind !== "contains") {
+        const key = edgeKey(e);
+        if (!seenEdges.has(key)) {
+          seenEdges.add(key);
+          edges.push(e);
+        }
+      }
+    });
+  }
+
+  addEdgesFrom(rootGraphData);
+  addEdgesFrom(fullGraphData);
+
   return { nodes, edges };
 }
+
+function buildGroupGraph(groupNode) {
+  // Heuristic group nodes (Tests, Data Models, etc.) hold member_ids
+  // pointing to the original class nodes in the full graph.
+  const memberIds = new Set((groupNode.member_ids || []));
+
+  const allAvailableNodes = new Map();
+  fullGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
+  rootGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
+
+  const nodes = [];
+  memberIds.forEach(mid => {
+    const n = allAvailableNodes.get(mid);
+    if (n) nodes.push(n);
+  });
+
+  const nodeIds = new Set(nodes.map(n => n.id));
+
+  const edgeKey = e => `${_nid(e.source)}|${_nid(e.target)}|${e.kind}`;
+  const seenEdges = new Set();
+  const edges = [];
+
+  function addEdgesFrom(sourceGraph) {
+    sourceGraph.edges.forEach(e => {
+      const s = _nid(e.source), t = _nid(e.target);
+      if (nodeIds.has(s) && nodeIds.has(t) && e.kind !== "contains") {
+        const key = edgeKey(e);
+        if (!seenEdges.has(key)) {
+          seenEdges.add(key);
+          edges.push(e);
+        }
+      }
+    });
+  }
+
+  addEdgesFrom(fullGraphData);
+  addEdgesFrom(rootGraphData);
+
+  return { nodes, edges };
+}
+
+const _GROUP_KINDS = new Set(["test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 
 function drillIntoNode(d) {
   if (d.kind === "class") {
@@ -604,6 +761,13 @@ function drillIntoNode(d) {
     graphStack.push({ graph: graphData, label: currentGraphLabel });
     updateBackButton();
     _setGraphView(sub, `Metaclass: ${d.name}`);
+    return;
+  }
+  if (_GROUP_KINDS.has(d.kind)) {
+    const sub = buildGroupGraph(d);
+    graphStack.push({ graph: graphData, label: currentGraphLabel });
+    updateBackButton();
+    _setGraphView(sub, d.name);
     return;
   }
   selectNode(d);
@@ -710,18 +874,45 @@ function seedPositions(nodes, links, width, height) {
     });
   });
   const bottomY = startY + compRows * COMPONENT_GAP_Y + ISOLATED_ROW_Y_OFFSET;
-  const totalIsolatedW = (isolatedComps.length - 1) * ISOLATED_COL_GAP;
+  const isoColGap = isolatedComps.length > 12 ? 300 : ISOLATED_COL_GAP;
+  const isoRowGap = isolatedComps.length > 12 ? 260 : GRID_SNAP_ROW_GAP;
+  const isoCols = Math.max(1, Math.min(isolatedComps.length, Math.ceil(Math.sqrt(isolatedComps.length * 1.4))));
+  const totalIsolatedW = (isoCols - 1) * isoColGap;
   const isolatedStartX = width / 2 - totalIsolatedW / 2;
   isolatedComps.forEach((comp, i) => {
-    comp[0].x = isolatedStartX + i * ISOLATED_COL_GAP; comp[0].y = bottomY; comp[0]._isolated = true;
+    const col = i % isoCols;
+    const row = Math.floor(i / isoCols);
+    comp[0].x = isolatedStartX + col * isoColGap; comp[0].y = bottomY + row * isoRowGap; comp[0]._isolated = true; comp[0]._isolatedTargetY = bottomY + row * isoRowGap;
   });
 }
 
 function makeIsolatedBottomForce(isolatedY, strength = 0.15) {
   let nodes = [];
-  function force(alpha) { for (const n of nodes) { if (!n._isolated) continue; n.vy += (isolatedY - n.y) * strength * alpha; } }
+  function force(alpha) { for (const n of nodes) { if (!n._isolated) continue; const targetY = n._isolatedTargetY || isolatedY; n.vy += (targetY - n.y) * strength * alpha; } }
   force.initialize = (_nodes) => { nodes = _nodes || []; };
   return force;
+}
+
+function gridLayout(nodeData, width, height) {
+  // Lay out nodes in a simple grid centered in the viewport
+  const count = nodeData.length;
+  if (count === 0) return;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(count * 1.4)));
+  const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
+  const rowGap = count > 20 ? 260 : count > 12 ? 310 : GRID_SNAP_ROW_GAP;
+  const rows = Math.ceil(count / cols);
+  const gridW = (cols - 1) * colGap;
+  const gridH = (rows - 1) * rowGap;
+  const originX = width / 2 - gridW / 2;
+  const originY = height / 2 - gridH / 2;
+  nodeData.forEach(function(n, i) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    n.x = originX + col * colGap;
+    n.y = originY + row * rowGap;
+    n.fx = null;
+    n.fy = null;
+  });
 }
 
 // ── Render ─────────────────────────────────────────────────────────
@@ -1148,6 +1339,17 @@ function renderGraph() {
     centerDetailOnGraphPoint(d.x, d.y, true);
   });
 
+  const GROUP_KINDS = ["test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+  const groupFo = node.filter(d => GROUP_KINDS.includes(d.kind))
+    .append("foreignObject").attr("class","node-methods-fo")
+    .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
+    .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
+    .html(d=>{const members=(d.members||[]).map(m=>`<div>${m}</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Members (${(d.members||[]).length})</div><div class="node-methods-scroll">${members||"<div>(none)</div>"}</div></div>`;});
+  groupFo.on("click",function(event,d){
+    event.stopPropagation();
+    centerDetailOnGraphPoint(d.x, d.y, true);
+  });
+
   function _initDetail() {
     _pendingDetailTimeout = setTimeout(function() {
       _pendingDetailTimeout = null;
@@ -1204,15 +1406,57 @@ function renderGraph() {
     }
 
     // ── Fresh layout (no cache hit) ──────────────────────────────
-    seedPositions(nodeData, linkData, width, height);
 
-    const connectedYs = nodeData.filter(n => !n._isolated).map(n => n.y);
+    // Determine which nodes have edges
+    const connectedNodeIds = new Set();
+    linkData.forEach(function(e) {
+      const s = typeof e.source === "object" ? e.source.id : e.source;
+      const t = typeof e.target === "object" ? e.target.id : e.target;
+      connectedNodeIds.add(s);
+      connectedNodeIds.add(t);
+    });
+
+    const hasAnyEdges = connectedNodeIds.size > 0;
+
+    // If no nodes have edges, skip the simulation entirely — just grid-layout
+    if (!hasAnyEdges) {
+      gridLayout(nodeData, width, height);
+      window._nodes = node; window._links = link; window._nodeData = nodeData; window._linkData = linkData;
+      node.attr("transform", d => `translate(${d.x},${d.y})`);
+      link.attr("d", edgePath);
+      const ctr = document.getElementById("graph-container");
+      fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
+      var eidGrid = setTimeout(function() {
+        ensureAllNodesVisible(svg, zoomBehavior, nodeData);
+      }, 100);
+      _pendingEnsureTimeouts.push(eidGrid);
+      svg.on("click", function() { selectedNode = null; clearHighlight(); });
+      const posMap = new Map(nodeData.map(n => [n.id, { x: n.x, y: n.y }]));
+      _positionCache.set(cacheKey, posMap);
+      _savePositionsToDisk(nodeData);
+      _initDetail();
+      return;
+    }
+
+    // Separate edgeless nodes — they'll be grid-positioned after simulation
+    const edgelessNodes = nodeData.filter(n => !connectedNodeIds.has(n.id));
+    const simulatedNodes = nodeData.filter(n => connectedNodeIds.has(n.id));
+    // Only edges referencing simulated nodes
+    const simulatedLinks = linkData.filter(function(e) {
+      const s = typeof e.source === "object" ? e.source.id : e.source;
+      const t = typeof e.target === "object" ? e.target.id : e.target;
+      return connectedNodeIds.has(s) && connectedNodeIds.has(t);
+    });
+
+    seedPositions(simulatedNodes, simulatedLinks, width, height);
+
+    const connectedYs = simulatedNodes.filter(n => !n._isolated).map(n => n.y);
     const maxConnectedY = connectedYs.length ? Math.max(...connectedYs) : height / 2;
     const isolatedTargetY = maxConnectedY + ISOLATED_ROW_Y_OFFSET;
 
-    simulation = d3.forceSimulation(nodeData)
+    simulation = d3.forceSimulation(simulatedNodes)
       .alpha(1).alphaDecay(0.03).velocityDecay(0.35)
-      .force("link", d3.forceLink(linkData).id(d=>d.id).distance(d=>EDGE_DISTANCE[d.kind]||240).strength(d=>d.kind==="contains"?0.35:0.2).iterations(3))
+      .force("link", d3.forceLink(simulatedLinks).id(d=>d.id).distance(d=>EDGE_DISTANCE[d.kind]||240).strength(d=>d.kind==="contains"?0.35:0.2).iterations(3))
       .force("charge", d3.forceManyBody().strength(d=>NODE_CHARGE[d.kind]||-500))
       .force("center", d3.forceCenter(width/2,height/2))
       .force("collision", d3.forceCollide().radius(d=>{const s=NODE_SIZE[d.kind]||{w:160,h:60};return Math.sqrt(s.w*s.w+s.h*s.h)/2+COLLISION_PAD;}))
@@ -1235,6 +1479,28 @@ function renderGraph() {
 
     function _saveAndSnap() {
       autoFitActive = false;
+
+      // Position edgeless nodes in a grid below the simulated graph
+      if (edgelessNodes.length > 0) {
+        const simYs = simulatedNodes.map(n => n.y);
+        const simXs = simulatedNodes.map(n => n.x);
+        const bottomY = (simYs.length ? Math.max(...simYs) : height / 2) + ISOLATED_ROW_Y_OFFSET;
+        const centerX = simXs.length ? (Math.min(...simXs) + Math.max(...simXs)) / 2 : width / 2;
+        const edgelessColGap = edgelessNodes.length > 12 ? 300 : ISOLATED_COL_GAP;
+        const edgelessRowGap = edgelessNodes.length > 12 ? 260 : GRID_SNAP_ROW_GAP;
+        const gridCols = Math.max(1, Math.min(edgelessNodes.length, Math.ceil(Math.sqrt(edgelessNodes.length * 1.4))));
+        const gridRows = Math.ceil(edgelessNodes.length / gridCols);
+        const totalW = (gridCols - 1) * edgelessColGap;
+        const startX = centerX - totalW / 2;
+        edgelessNodes.forEach(function(n, i) {
+          const col = i % gridCols;
+          const row = Math.floor(i / gridCols);
+          n.x = startX + col * edgelessColGap;
+          n.y = bottomY + row * edgelessRowGap;
+          n.fx = null; n.fy = null;
+        });
+      }
+
       snapNodesToGrid(nodeData, svg, g, node, link);
       // Final safety check after grid snap animation
       var eid2 = setTimeout(function() {
