@@ -330,12 +330,14 @@
   .legend-edge.dotted { border-top-style: dotted; }
 
   /* Loading */
-  #loading {
-    position: fixed;
+  .loading-indicator {
+    position: absolute;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     font-size: 14px;
     color: var(--text-muted);
+    z-index: 20;
+    pointer-events: none;
   }
 
   /* Overview cursor */
@@ -349,10 +351,12 @@
 <div id="graph-panels">
   <div id="graph-container">
     <div class="panel-label">Overview</div>
+    <div class="loading-indicator">Analyzing codebase…</div>
     <svg id="graph-svg"></svg>
   </div>
   <div id="zoom-container">
     <div class="panel-label">Detail View — click overview to navigate</div>
+    <div class="loading-indicator">Analyzing codebase…</div>
     <svg id="zoom-svg"></svg>
   </div>
 </div>
@@ -367,7 +371,6 @@
   <!-- populated dynamically by updateLegend() -->
 </div>
 
-<div id="loading">Analyzing codebase…</div>
 
 <script>
 const API_BASE = window.location.origin;
@@ -591,11 +594,11 @@ async function loadGraph() {
       edges: rootGraphData.intermediate_edges || [],
     };
 
-    document.getElementById("loading").style.display = "none";
+    document.querySelectorAll(".loading-indicator").forEach(el => el.style.display = "none");
     updateLegend(rootGraphData);
     _setGraphView(rootGraphData, "Overview");
   } catch (err) {
-    document.getElementById("loading").textContent = `Error: ${err.message}`;
+    document.querySelectorAll(".loading-indicator").forEach(el => el.textContent = `Error: ${err.message}`);
   }
 }
 
