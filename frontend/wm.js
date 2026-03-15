@@ -31,10 +31,18 @@ const WM_DEFAULT_LAYOUT = {
     {
       type: 'split',
       direction: 'vertical',
-      ratio: 0.75,
+      ratio: 0.35,
       children: [
-        { type: 'panel', panelId: 'node-inspector' },
-        { type: 'panel', panelId: 'legend' },
+        { type: 'panel', panelId: 'directory' },
+        {
+          type: 'split',
+          direction: 'vertical',
+          ratio: 0.75,
+          children: [
+            { type: 'panel', panelId: 'node-inspector' },
+            { type: 'panel', panelId: 'legend' },
+          ],
+        },
       ],
     },
   ],

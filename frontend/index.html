@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VibeCodingAssistant — Tactical Architecture</title>
+<title>DANTE IDE — Tactical Architecture</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -331,6 +331,31 @@
   .legend-edge.dashed { border-top-style:dashed; }
   .legend-edge.dotted { border-top-style:dotted; }
 
+  /* ── Directory tree ──────────────────────────────────────── */
+  #dir-tree {
+    background:var(--surface); padding:8px 0; font-size:12px;
+    overflow-y:auto; overflow-x:hidden; width:100%; height:100%;
+    font-family:'Share Tech Mono','SF Mono',monospace;
+  }
+  .dir-entry {
+    display:flex; align-items:center; gap:4px;
+    padding:2px 8px 2px 0; cursor:default; white-space:nowrap;
+    color:var(--text); transition:background .1s;
+  }
+  .dir-entry:hover { background:var(--surface-alt); }
+  .dir-entry.selected { background:var(--olive); color:var(--accent); }
+  .dir-toggle {
+    width:16px; text-align:center; flex-shrink:0;
+    font-size:10px; color:var(--text-muted); cursor:pointer;
+    user-select:none; transition:transform .15s;
+  }
+  .dir-toggle.open { transform:rotate(90deg); }
+  .dir-toggle.leaf { visibility:hidden; }
+  .dir-icon { flex-shrink:0; font-size:11px; }
+  .dir-name { overflow:hidden; text-overflow:ellipsis; }
+  .dir-children { display:none; }
+  .dir-children.open { display:block; }
+
   /* ── Loading overlays ────────────────────────────────────── */
   .panel-loading {
     position:absolute; top:0; left:0; right:0; bottom:0;
@@ -352,7 +377,7 @@
 <button id="back-btn">← Back</button>
 
 <div id="wm-toolbar">
-  <span class="wm-toolbar-title">VibeCodingAssistant</span>
+  <span class="wm-toolbar-title">Dante Coding Assistant</span>
   <div class="wm-toolbar-group">
     <button id="wm-view-btn">View ▾</button>
     <div id="wm-view-menu"></div>
@@ -413,6 +438,121 @@ PanelRegistry.register({
   floatable: true,
   render: function (content) {
     // updateLegend() will populate this
+  },
+});
+
+// ── Directory tree helpers ─────────────────────────────────────────
+var _dirTreeCache = null;   // cached API response
+var _dirTreeLoading = false; // prevent duplicate fetches
+
+function _renderDirNode(node, depth) {
+  var el = document.createElement('div');
+
+  var row = document.createElement('div');
+  row.className = 'dir-entry';
+  row.style.paddingLeft = (8 + depth * 14) + 'px';
+
+  var toggle = document.createElement('span');
+  toggle.className = 'dir-toggle' + (node.type === 'directory' ? '' : ' leaf');
+  toggle.textContent = '▶';
+
+  var icon = document.createElement('span');
+  icon.className = 'dir-icon';
+  icon.textContent = node.type === 'directory' ? '📂' : '📄';
+
+  var name = document.createElement('span');
+  name.className = 'dir-name';
+  name.textContent = node.name;
+
+  row.appendChild(toggle);
+  row.appendChild(icon);
+  row.appendChild(name);
+  el.appendChild(row);
+
+  if (node.type === 'directory' && node.children && node.children.length) {
+    var childContainer = document.createElement('div');
+    childContainer.className = 'dir-children';
+
+    node.children.forEach(function (child) {
+      childContainer.appendChild(_renderDirNode(child, depth + 1));
+    });
+
+    el.appendChild(childContainer);
+
+    toggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var isOpen = childContainer.classList.toggle('open');
+      toggle.classList.toggle('open', isOpen);
+      icon.textContent = isOpen ? '📂' : '📁';
+    });
+
+    // Start top-level directories expanded
+    if (depth === 0) {
+      childContainer.classList.add('open');
+      toggle.classList.add('open');
+      icon.textContent = '📂';
+    }
+  }
+
+  return el;
+}
+
+function _populateDirTree(container, tree) {
+  container.innerHTML = '';
+  if (tree.children && tree.children.length) {
+    tree.children.forEach(function (child) {
+      container.appendChild(_renderDirNode(child, 0));
+    });
+  } else {
+    container.innerHTML = '<div style="padding:12px;color:var(--text-muted);text-align:center;font-size:12px;text-transform:uppercase;letter-spacing:1px;">No files found</div>';
+  }
+}
+
+function loadDirectoryTree() {
+  var container = document.getElementById('dir-tree');
+  if (!container) return;
+
+  // If already cached, render immediately
+  if (_dirTreeCache) {
+    _populateDirTree(container, _dirTreeCache);
+    return;
+  }
+
+  // If a fetch is already in flight, just wait — it will populate when done
+  if (_dirTreeLoading) return;
+  _dirTreeLoading = true;
+
+  var apiBase = window.location.origin;
+  fetch(apiBase + '/api/files')
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function (tree) {
+      _dirTreeCache = tree;
+      _dirTreeLoading = false;
+      // Re-grab the container — the panel may have been re-rendered while we waited
+      var c = document.getElementById('dir-tree');
+      if (c) _populateDirTree(c, tree);
+    })
+    .catch(function (err) {
+      _dirTreeLoading = false;
+      var c = document.getElementById('dir-tree');
+      if (c) c.innerHTML = '<div style="padding:12px;color:var(--red);text-align:center;font-size:12px;">Error: ' + err.message + '</div>';
+    });
+}
+
+PanelRegistry.register({
+  id: 'directory',
+  title: 'Files',
+  icon: '📁',
+  contentId: 'dir-tree',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    content.innerHTML = '<div class="panel-loading" data-loading-dir>Loading file tree…</div>';
+    // Trigger load (uses cache if already fetched, or kicks off fetch)
+    loadDirectoryTree();
   },
 });
 
@@ -1763,6 +1903,7 @@ window.addEventListener("resize", _handleResize);
 // ── Boot ───────────────────────────────────────────────────────────
 WindowManager.init(document.getElementById("wm-root"));
 loadGraph();
+loadDirectoryTree();
 </script>
 
 </body>

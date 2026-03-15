@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -138,6 +139,108 @@ async def save_positions(request: Request):
 
 
 # ── Window layout cache endpoints ───────────────────────────────────
+
+# ── Directory listing endpoint ──────────────────────────────────────
+
+# File extensions considered relevant for code analysis
+_CODE_EXTENSIONS = {
+    ".py", ".pyx", ".pxd", ".pyi",
+    ".js", ".ts", ".jsx", ".tsx",
+    ".java", ".kt", ".scala",
+    ".c", ".h", ".cpp", ".hpp",
+    ".go", ".rs", ".rb", ".php",
+    ".cs", ".swift", ".m", ".mm",
+}
+
+_IGNORE_DIRS = {
+    "__pycache__", ".git", ".svn", ".hg", "node_modules",
+    ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+    ".eggs", "*.egg-info",
+}
+
+
+def _build_file_tree(root: str, max_depth: int = 12) -> dict:
+    """Walk *root* and return a nested dict representing the file tree.
+
+    Returns:
+        {
+          "name": "<dir-name>",
+          "type": "directory",
+          "children": [ ... ],
+        }
+
+    Files are only included if they have a recognised code extension.
+    Directories that end up empty (no code files at any depth) are pruned.
+    """
+
+    def _walk(dirpath: str, depth: int) -> Optional[dict]:
+        if depth > max_depth:
+            return None
+        name = os.path.basename(dirpath)
+        if name in _IGNORE_DIRS:
+            return None
+
+        children: list[dict] = []
+
+        try:
+            entries = sorted(os.listdir(dirpath))
+        except PermissionError:
+            return None
+
+        dirs_first: list[tuple[str, bool]] = []
+        for entry in entries:
+            full = os.path.join(dirpath, entry)
+            dirs_first.append((entry, os.path.isdir(full)))
+
+        # Sort: directories first, then files, both alphabetical
+        dirs_first.sort(key=lambda t: (not t[1], t[0].lower()))
+
+        for entry, is_dir in dirs_first:
+            full = os.path.join(dirpath, entry)
+            if is_dir:
+                subtree = _walk(full, depth + 1)
+                if subtree is not None:
+                    children.append(subtree)
+            else:
+                ext = os.path.splitext(entry)[1].lower()
+                if ext in _CODE_EXTENSIONS:
+                    children.append({
+                        "name": entry,
+                        "type": "file",
+                        "path": os.path.relpath(full, root),
+                    })
+
+        if not children:
+            return None
+
+        return {
+            "name": name,
+            "type": "directory",
+            "path": os.path.relpath(dirpath, root) if dirpath != root else ".",
+            "children": children,
+        }
+
+    tree = _walk(root, 0)
+    if tree is None:
+        tree = {"name": os.path.basename(root), "type": "directory", "path": ".", "children": []}
+    return tree
+
+
+@app.get("/api/files")
+def get_files():
+    """Return a directory tree of the analysed codebase."""
+    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
+    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
+    abs_path = os.path.abspath(target_path)
+
+    if not os.path.isdir(abs_path):
+        return JSONResponse({"error": "Codebase directory not found."}, status_code=404)
+
+    tree = _build_file_tree(abs_path)
+    return tree
+
+
+# ── Window layout cache endpoints (continued) ──────────────────────
 
 def _layout_file() -> Path:
     """Return the disk path for the window layout cache."""
