@@ -240,6 +240,28 @@ def get_files():
     return tree
 
 
+@app.get("/api/source")
+def get_source(path: str = Query(..., description="Relative file path within the codebase")):
+    """Return the source code of a file within the analysed codebase."""
+    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
+    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
+    abs_root = os.path.abspath(target_path)
+
+    # Resolve and validate the requested path stays within the codebase root
+    requested = os.path.normpath(os.path.join(abs_root, path))
+    if not requested.startswith(abs_root + os.sep) and requested != abs_root:
+        return JSONResponse({"error": "Invalid path"}, status_code=400)
+    if not os.path.isfile(requested):
+        return JSONResponse({"error": "File not found"}, status_code=404)
+
+    try:
+        content = Path(requested).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return JSONResponse({"error": "Could not read file"}, status_code=500)
+
+    return {"path": path, "content": content}
+
+
 # ── Window layout cache endpoints (continued) ──────────────────────
 
 def _layout_file() -> Path:

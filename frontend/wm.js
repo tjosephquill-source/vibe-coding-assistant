@@ -25,7 +25,7 @@ const WM_DEFAULT_LAYOUT = {
       ratio: 0.4,
       children: [
         { type: 'panel', panelId: 'overview' },
-        { type: 'panel', panelId: 'detail-view' },
+        { type: 'tabs', panels: ['detail-view', 'code-editor'], activeIndex: 0 },
       ],
     },
     {
@@ -171,6 +171,21 @@ class LayoutEngine {
     if (node.type === 'tabs')  return node.panels.indexOf(panelId) !== -1;
     if (node.type === 'split') return this.hasPanelInTree(panelId, node.children[0])
                                       || this.hasPanelInTree(panelId, node.children[1]);
+    return false;
+  }
+
+  /** If panelId lives inside a tab group, set it as the active tab. Returns true if switched. */
+  activateTab(panelId, node) {
+    if (node === undefined) node = this.root;
+    if (!node) return false;
+    if (node.type === 'tabs') {
+      var idx = node.panels.indexOf(panelId);
+      if (idx !== -1) { node.activeIndex = idx; return true; }
+    }
+    if (node.type === 'split') {
+      return this.activateTab(panelId, node.children[0])
+          || this.activateTab(panelId, node.children[1]);
+    }
     return false;
   }
 

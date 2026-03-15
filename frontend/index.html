@@ -62,11 +62,6 @@
     z-index:9000; box-shadow:0 2px 12px rgba(0,0,0,.5);
   }
   #wm-toolbar::before { content:'◆'; color:var(--accent); font-size:10px; margin-right:2px; text-shadow:0 0 8px var(--accent-glow); }
-  .wm-toolbar-title {
-    font-weight:700; color:var(--accent); margin-right:10px;
-    font-size:13px; letter-spacing:2.5px; text-transform:uppercase;
-    text-shadow:0 0 12px var(--accent-glow);
-  }
   .wm-toolbar-group { position:relative; }
   #wm-view-btn, #wm-reset-btn {
     background:var(--surface-alt); border:1px solid var(--border); color:var(--text-muted);
@@ -356,6 +351,86 @@
   .dir-children { display:none; }
   .dir-children.open { display:block; }
 
+  /* ── Code editor panel ─────────────────────────────────── */
+  #code-editor {
+    background:var(--bg); width:100%; height:100%;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .code-editor-toolbar {
+    display:flex; align-items:center; gap:8px;
+    padding:4px 10px; min-height:26px;
+    background:var(--surface); border-bottom:1px solid var(--border);
+    font-size:11px; color:var(--text-muted); flex-shrink:0;
+    overflow:hidden;
+  }
+  .code-editor-filepath {
+    font-family:'Share Tech Mono',monospace; font-size:11px;
+    color:var(--tan); white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; flex:1;
+  }
+  .code-editor-line-info {
+    font-family:'Share Tech Mono',monospace; font-size:10px;
+    color:var(--text-muted); white-space:nowrap; flex-shrink:0;
+  }
+  .code-editor-scroll {
+    flex:1; overflow:auto; position:relative;
+  }
+  .code-editor-table {
+    width:100%; border-collapse:collapse;
+    font-family:'Share Tech Mono','SF Mono','Fira Code',monospace;
+    font-size:12px; line-height:1.55;
+  }
+  .code-editor-table td {
+    padding:0; vertical-align:top; white-space:pre;
+  }
+  .code-line-no {
+    width:1px; white-space:nowrap; padding:0 10px 0 8px;
+    text-align:right; color:var(--text-muted); opacity:.5;
+    user-select:none; border-right:1px solid var(--border);
+    background:var(--surface);
+  }
+  .code-line-text {
+    padding:0 12px; color:var(--text);
+  }
+  .code-line-highlight td {
+    background:rgba(232,168,36,.10);
+  }
+  .code-line-highlight .code-line-no {
+    color:var(--accent); opacity:1;
+    background:rgba(232,168,36,.12);
+  }
+  .code-editor-placeholder {
+    color:var(--text-muted); font-size:13px;
+    text-align:center; padding:40px 20px;
+    text-transform:uppercase; letter-spacing:2px;
+    font-weight:600; line-height:1.8;
+  }
+
+  /* ── Node context menu ──────────────────────────────────── */
+  #node-ctx-menu {
+    display:none; position:fixed; z-index:12000;
+    min-width:180px; padding:4px 0;
+    background:var(--surface); border:1px solid var(--border-hi);
+    box-shadow:0 8px 28px rgba(0,0,0,.65), 0 0 12px rgba(232,168,36,.08);
+    clip-path:var(--clip); font-family:'Rajdhani',sans-serif;
+  }
+  #node-ctx-menu.open { display:block; }
+  .ctx-item {
+    display:flex; align-items:center; gap:8px;
+    padding:7px 16px; cursor:pointer; font-size:12px;
+    color:var(--text); font-weight:600; text-transform:uppercase;
+    letter-spacing:.8px; transition:background .1s, color .1s;
+  }
+  .ctx-item:hover { background:var(--olive); color:var(--accent); }
+  .ctx-item.disabled {
+    color:var(--text-muted); opacity:.45; pointer-events:none;
+  }
+  .ctx-icon { width:18px; text-align:center; font-size:13px; flex-shrink:0; }
+  .ctx-sep {
+    height:1px; margin:4px 12px;
+    background:var(--border);
+  }
+
   /* ── Loading overlays ────────────────────────────────────── */
   .panel-loading {
     position:absolute; top:0; left:0; right:0; bottom:0;
@@ -377,7 +452,6 @@
 <button id="back-btn">← Back</button>
 
 <div id="wm-toolbar">
-  <span class="wm-toolbar-title">Dante Coding Assistant</span>
   <div class="wm-toolbar-group">
     <button id="wm-view-btn">View ▾</button>
     <div id="wm-view-menu"></div>
@@ -386,6 +460,15 @@
 </div>
 
 <div id="wm-root"></div>
+
+<!-- Node right-click context menu -->
+<div id="node-ctx-menu">
+  <div class="ctx-item" id="ctx-dig-down"><span class="ctx-icon">⬇</span>Dig Down</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-get-info"><span class="ctx-icon">📋</span>Get Info</div>
+  <div class="ctx-item" id="ctx-view-code"><span class="ctx-icon">📝</span>View Code</div>
+  <div class="ctx-item" id="ctx-reveal-file"><span class="ctx-icon">📁</span>Reveal in Files</div>
+</div>
 
 
 <script>
@@ -444,6 +527,7 @@ PanelRegistry.register({
 // ── Directory tree helpers ─────────────────────────────────────────
 var _dirTreeCache = null;   // cached API response
 var _dirTreeLoading = false; // prevent duplicate fetches
+var _dirEntryMap = {};       // path → { row: HTMLElement, toggle: HTMLElement, childContainer: HTMLElement|null, icon: HTMLElement }
 
 function _renderDirNode(node, depth) {
   var el = document.createElement('div');
@@ -451,6 +535,7 @@ function _renderDirNode(node, depth) {
   var row = document.createElement('div');
   row.className = 'dir-entry';
   row.style.paddingLeft = (8 + depth * 14) + 'px';
+  if (node.path) row.dataset.path = node.path;
 
   var toggle = document.createElement('span');
   toggle.className = 'dir-toggle' + (node.type === 'directory' ? '' : ' leaf');
@@ -469,8 +554,18 @@ function _renderDirNode(node, depth) {
   row.appendChild(name);
   el.appendChild(row);
 
+  // Click on a file opens it in the code editor
+  if (node.type === 'file' && node.path) {
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', function () {
+      openSourceFile(node.path);
+    });
+  }
+
+  var childContainer = null;
+
   if (node.type === 'directory' && node.children && node.children.length) {
-    var childContainer = document.createElement('div');
+    childContainer = document.createElement('div');
     childContainer.className = 'dir-children';
 
     node.children.forEach(function (child) {
@@ -494,10 +589,16 @@ function _renderDirNode(node, depth) {
     }
   }
 
+  // Register in the lookup map
+  if (node.path) {
+    _dirEntryMap[node.path] = { row: row, toggle: toggle, childContainer: childContainer, icon: icon };
+  }
+
   return el;
 }
 
 function _populateDirTree(container, tree) {
+  _dirEntryMap = {};
   container.innerHTML = '';
   if (tree.children && tree.children.length) {
     tree.children.forEach(function (child) {
@@ -508,8 +609,77 @@ function _populateDirTree(container, tree) {
   }
 }
 
-function loadDirectoryTree() {
-  var container = document.getElementById('dir-tree');
+function revealInFileTree(filePath) {
+  if (!filePath) return;
+
+  // Ensure the directory panel is open
+  if (!WindowManager.layout.hasPanelInTree('directory') &&
+      !WindowManager.floating.floatingPanels.has('directory')) {
+    WindowManager.openPanel('directory');
+  }
+  // If it's in a tab group, switch to its tab
+  if (WindowManager.layout.activateTab('directory')) {
+    WindowManager.rebuildLayout();
+    WindowManager._saveState();
+  }
+
+  // The tree may not have loaded yet — wait for it
+  function _doReveal() {
+    // Build the list of ancestor directory paths to expand
+    var parts = filePath.split('/');
+    var ancestors = [];
+    for (var i = 1; i < parts.length; i++) {
+      ancestors.push(parts.slice(0, i).join('/'));
+    }
+
+    // Expand each ancestor directory
+    for (var j = 0; j < ancestors.length; j++) {
+      var entry = _dirEntryMap[ancestors[j]];
+      if (entry && entry.childContainer) {
+        entry.childContainer.classList.add('open');
+        entry.toggle.classList.add('open');
+        entry.icon.textContent = '📂';
+      }
+    }
+
+    // Clear any previous selection
+    var prev = document.querySelector('.dir-entry.selected');
+    if (prev) prev.classList.remove('selected');
+
+    // Highlight and scroll to the target
+    var target = _dirEntryMap[filePath];
+    if (target) {
+      target.row.classList.add('selected');
+      // Scroll the file tree container so the entry is visible
+      var treeContainer = document.getElementById('dir-tree');
+      if (treeContainer) {
+        setTimeout(function () {
+          var rowTop = target.row.offsetTop;
+          var containerH = treeContainer.clientHeight;
+          treeContainer.scrollTop = Math.max(0, rowTop - containerH / 3);
+        }, 60);
+      }
+    }
+  }
+
+  // If the tree hasn't loaded yet, wait for it, then reveal
+  if (Object.keys(_dirEntryMap).length === 0) {
+    // Tree not yet rendered — loadDirectoryTree is async. Poll briefly.
+    var attempts = 0;
+    var poller = setInterval(function () {
+      attempts++;
+      if (Object.keys(_dirEntryMap).length > 0 || attempts > 30) {
+        clearInterval(poller);
+        _doReveal();
+      }
+    }, 100);
+  } else {
+    _doReveal();
+  }
+}
+
+function loadDirectoryTree(containerEl) {
+  var container = containerEl || document.getElementById('dir-tree');
   if (!container) return;
 
   // If already cached, render immediately
@@ -532,12 +702,12 @@ function loadDirectoryTree() {
       _dirTreeCache = tree;
       _dirTreeLoading = false;
       // Re-grab the container — the panel may have been re-rendered while we waited
-      var c = document.getElementById('dir-tree');
+      var c = document.getElementById('dir-tree') || container;
       if (c) _populateDirTree(c, tree);
     })
     .catch(function (err) {
       _dirTreeLoading = false;
-      var c = document.getElementById('dir-tree');
+      var c = document.getElementById('dir-tree') || container;
       if (c) c.innerHTML = '<div style="padding:12px;color:var(--red);text-align:center;font-size:12px;">Error: ' + err.message + '</div>';
     });
 }
@@ -551,8 +721,113 @@ PanelRegistry.register({
   floatable: true,
   render: function (content) {
     content.innerHTML = '<div class="panel-loading" data-loading-dir>Loading file tree…</div>';
-    // Trigger load (uses cache if already fetched, or kicks off fetch)
-    loadDirectoryTree();
+    // Pass content element directly — it's not in the DOM yet during render
+    loadDirectoryTree(content);
+  },
+});
+
+// ── Code editor panel ──────────────────────────────────────────────
+var _codeEditorCurrentPath = null;  // currently displayed file path
+var _codeEditorLineStart = null;    // highlighted line range start
+var _codeEditorLineEnd = null;      // highlighted line range end
+
+function _renderCodeContent(container, path, content, lineStart, lineEnd) {
+  var lines = content.split('\n');
+  // If the file ends with a trailing newline, don't show the empty last line
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+
+  var html = '<div class="code-editor-toolbar">' +
+    '<span class="code-editor-filepath">' + _escHtml(path) + '</span>';
+  if (lineStart && lineEnd) {
+    html += '<span class="code-editor-line-info">Lines ' + lineStart + '–' + lineEnd + '</span>';
+  }
+  html += '</div><div class="code-editor-scroll" id="code-editor-scroll"><table class="code-editor-table"><tbody>';
+
+  for (var i = 0; i < lines.length; i++) {
+    var ln = i + 1;
+    var isHighlight = (lineStart && lineEnd && ln >= lineStart && ln <= lineEnd);
+    html += '<tr class="' + (isHighlight ? 'code-line-highlight' : '') + '" data-line="' + ln + '">' +
+      '<td class="code-line-no">' + ln + '</td>' +
+      '<td class="code-line-text">' + _escHtml(lines[i]) + '</td></tr>';
+  }
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+
+  // Scroll to the highlighted region
+  if (lineStart) {
+    setTimeout(function() {
+      var scrollEl = document.getElementById('code-editor-scroll');
+      var targetRow = scrollEl && scrollEl.querySelector('tr[data-line="' + lineStart + '"]');
+      if (targetRow && scrollEl) {
+        // Center the highlight in the viewport
+        var scrollTop = targetRow.offsetTop - scrollEl.clientHeight / 3;
+        scrollEl.scrollTop = Math.max(0, scrollTop);
+      }
+    }, 50);
+  }
+}
+
+function _escHtml(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
+function openSourceFile(filePath, lineStart, lineEnd, containerEl) {
+  _codeEditorCurrentPath = filePath;
+  _codeEditorLineStart = lineStart || null;
+  _codeEditorLineEnd = lineEnd || null;
+
+  // Ensure the code-editor panel is open
+  if (!WindowManager.layout.hasPanelInTree('code-editor') &&
+      !WindowManager.floating.floatingPanels.has('code-editor')) {
+    WindowManager.openPanel('code-editor');
+  }
+
+  // If it's in a tab group, switch to its tab
+  if (WindowManager.layout.activateTab('code-editor')) {
+    WindowManager.rebuildLayout();
+    WindowManager._saveState();
+  }
+
+  var container = containerEl || document.getElementById('code-editor');
+  if (!container) return;
+  container.innerHTML = '<div class="code-editor-placeholder">Loading…</div>';
+
+  var apiBase = window.location.origin;
+  fetch(apiBase + '/api/source?path=' + encodeURIComponent(filePath))
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function(data) {
+      var c = document.getElementById('code-editor') || container;
+      if (!c) return;
+      _renderCodeContent(c, data.path, data.content, lineStart, lineEnd);
+    })
+    .catch(function(err) {
+      var c = document.getElementById('code-editor') || container;
+      if (c) c.innerHTML = '<div class="code-editor-placeholder">Error: ' + err.message + '</div>';
+    });
+}
+
+PanelRegistry.register({
+  id: 'code-editor',
+  title: 'Code',
+  icon: '📝',
+  contentId: 'code-editor',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    if (_codeEditorCurrentPath) {
+      // Re-load current file (e.g. after panel re-mount)
+      // Pass content directly — it's not in the DOM yet during render
+      content.innerHTML = '<div class="code-editor-placeholder">Loading…</div>';
+      openSourceFile(_codeEditorCurrentPath, _codeEditorLineStart, _codeEditorLineEnd, content);
+    } else {
+      content.innerHTML = '<div class="code-editor-placeholder">Right-click a node<br>and choose "View Code"</div>';
+    }
   },
 });
 
@@ -932,6 +1207,7 @@ function buildGroupGraph(groupNode) {
 const _GROUP_KINDS = new Set(["test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 
 function drillIntoNode(d) {
+  _inspectorPinned = false;
   if (d.kind === "class") {
     const sub = buildClassMethodGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
@@ -1361,6 +1637,9 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
     .on("click", function(event, d) {
       event.stopPropagation();
       drillIntoNode(d);
+    })
+    .on("contextmenu", function(event, d) {
+      showNodeContextMenu(event, d);
     });
 
   // Add the viewport indicator rect to the overview SVG (on top of everything)
@@ -1368,7 +1647,7 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   updateViewportIndicator();
 
   // Click on detail background clears highlight
-  zoomSvg.on("click.clearhighlight", function() { clearHighlight(); });
+  zoomSvg.on("click.clearhighlight", function() { _inspectorPinned = false; clearHighlight(); });
 
   // Click on overview background to recenter the detail view
   overviewSvg.on("click.detailnav", function(event) {
@@ -1543,6 +1822,9 @@ function renderGraph() {
     .on("click", function(event, d) {
       event.stopPropagation();
       centerDetailOnGraphPoint(d.x, d.y, true);
+    })
+    .on("contextmenu", function(event, d) {
+      showNodeContextMenu(event, d);
     });
 
   node.append("rect")
@@ -1563,7 +1845,7 @@ function renderGraph() {
   classFo.on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
-  });
+  }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
 
   const metaFo = node.filter(d => d.kind === "metaclass")
     .append("foreignObject").attr("class","node-methods-fo")
@@ -1573,7 +1855,7 @@ function renderGraph() {
   metaFo.on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
-  });
+  }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
 
   const GROUP_KINDS = ["test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
   const groupFo = node.filter(d => GROUP_KINDS.includes(d.kind))
@@ -1584,7 +1866,7 @@ function renderGraph() {
   groupFo.on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
-  });
+  }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
 
   function _initDetail() {
     _pendingDetailTimeout = setTimeout(function() {
@@ -1615,7 +1897,7 @@ function renderGraph() {
       ensureAllNodesVisible(svg, zoomBehavior, nodeData);
     }, 100);
     _pendingEnsureTimeouts.push(eid1);
-    svg.on("click", function() { selectedNode = null; clearHighlight(); });
+    svg.on("click", function() { selectedNode = null; _inspectorPinned = false; clearHighlight(); });
     // Save to memory cache
     const memMap = new Map(nodeData.map(n => [n.id, { x: n.x, y: n.y }]));
     _positionCache.set(cacheKey, memMap);
@@ -1666,7 +1948,7 @@ function renderGraph() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
       }, 100);
       _pendingEnsureTimeouts.push(eidGrid);
-      svg.on("click", function() { selectedNode = null; clearHighlight(); });
+      svg.on("click", function() { selectedNode = null; _inspectorPinned = false; clearHighlight(); });
       const posMap = new Map(nodeData.map(n => [n.id, { x: n.x, y: n.y }]));
       _positionCache.set(cacheKey, posMap);
       _savePositionsToDisk(nodeData);
@@ -1765,8 +2047,123 @@ function renderGraph() {
     }, 4000);
   });
 
-  svg.on("click", function() { selectedNode = null; clearHighlight(); });
+  svg.on("click", function() { selectedNode = null; _inspectorPinned = false; clearHighlight(); });
 }
+
+// ── Context menu for nodes ─────────────────────────────────────────
+var _ctxMenuNode = null;        // the node data object the menu was opened for
+var _inspectorPinned = false;   // when true, hover won't overwrite the inspector
+
+var _DRILLABLE_KINDS = new Set(["class", "metaclass", "test_group", "model_group",
+  "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+
+function _canDrill(d) { return _DRILLABLE_KINDS.has(d.kind); }
+
+function _hasSourceFile(d) {
+  // Metaclass / group nodes set file_path to a directory (no extension) and line_start=0.
+  // Only enable "View Code" when the path looks like an actual file.
+  if (!d.file_path) return false;
+  // Must contain a dot (file extension) somewhere in the basename
+  var base = d.file_path.split('/').pop() || '';
+  return base.indexOf('.') !== -1;
+}
+
+function showNodeContextMenu(event, d) {
+  event.preventDefault();
+  event.stopPropagation();
+  _ctxMenuNode = d;
+
+  var menu = document.getElementById("node-ctx-menu");
+  var digItem = document.getElementById("ctx-dig-down");
+  var codeItem = document.getElementById("ctx-view-code");
+  var revealItem = document.getElementById("ctx-reveal-file");
+
+  // Enable / disable "Dig Down"
+  if (_canDrill(d)) {
+    digItem.classList.remove("disabled");
+  } else {
+    digItem.classList.add("disabled");
+  }
+
+  // Enable / disable "View Code" — need a real file path, not a directory
+  if (_hasSourceFile(d)) {
+    codeItem.classList.remove("disabled");
+  } else {
+    codeItem.classList.add("disabled");
+  }
+
+  // Enable / disable "Reveal in Files" — need any file_path at all
+  if (d.file_path) {
+    revealItem.classList.remove("disabled");
+  } else {
+    revealItem.classList.add("disabled");
+  }
+
+  // Position near cursor but keep on-screen
+  var mx = event.clientX, my = event.clientY;
+  menu.classList.add("open");
+  var mw = menu.offsetWidth, mh = menu.offsetHeight;
+  if (mx + mw > window.innerWidth)  mx = window.innerWidth - mw - 4;
+  if (my + mh > window.innerHeight) my = window.innerHeight - mh - 4;
+  menu.style.left = mx + "px";
+  menu.style.top  = my + "px";
+}
+
+function hideNodeContextMenu() {
+  var menu = document.getElementById("node-ctx-menu");
+  if (menu) menu.classList.remove("open");
+  _ctxMenuNode = null;
+}
+
+// Menu item handlers (DOM already exists since <script> is at end of body)
+(function() {
+  var digBtn  = document.getElementById("ctx-dig-down");
+  var infoBtn = document.getElementById("ctx-get-info");
+  var codeBtn = document.getElementById("ctx-view-code");
+  var revealBtn = document.getElementById("ctx-reveal-file");
+
+  digBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode && _canDrill(_ctxMenuNode)) {
+      drillIntoNode(_ctxMenuNode);
+    }
+    hideNodeContextMenu();
+  });
+
+  infoBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode) {
+      _inspectorPinned = true;
+      populatePanel(_ctxMenuNode);
+      highlightConnected(_ctxMenuNode);
+    }
+    hideNodeContextMenu();
+  });
+
+  codeBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode && _hasSourceFile(_ctxMenuNode)) {
+      openSourceFile(_ctxMenuNode.file_path, _ctxMenuNode.line_start, _ctxMenuNode.line_end);
+    }
+    hideNodeContextMenu();
+  });
+
+  revealBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode && _ctxMenuNode.file_path) {
+      revealInFileTree(_ctxMenuNode.file_path);
+    }
+    hideNodeContextMenu();
+  });
+})();
+
+// Close menu on any outside click, Escape, or scroll
+document.addEventListener("mousedown", function(e) {
+  var menu = document.getElementById("node-ctx-menu");
+  if (menu && !menu.contains(e.target)) hideNodeContextMenu();
+});
+document.addEventListener("keydown", function(e) { if (e.key === "Escape") hideNodeContextMenu(); });
+window.addEventListener("scroll", function() { hideNodeContextMenu(); }, true);
 
 // ── Node selection & detail panel ──────────────────────────────────
 function selectNode(d) {
@@ -1851,7 +2248,10 @@ function highlightConnected(d) {
     el.style("opacity", (sid === d.id || tid === d.id) ? 0.9 : 0.05);
   });
 
-  populatePanel(d);
+  // Don't overwrite the inspector when it's pinned by "Get Info"
+  if (!_inspectorPinned) {
+    populatePanel(d);
+  }
 }
 
 function clearHighlight() {
@@ -1873,7 +2273,10 @@ function clearHighlight() {
   });
   zoomSvg.selectAll("[data-edge-src]").style("opacity", 0.5);
 
-  showPlaceholder();
+  // Don't overwrite the inspector when it's pinned
+  if (!_inspectorPinned) {
+    showPlaceholder();
+  }
 }
 
 // Drill navigation
