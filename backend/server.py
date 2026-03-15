@@ -137,6 +137,38 @@ async def save_positions(request: Request):
     return {"status": "ok"}
 
 
+# ── Window layout cache endpoints ───────────────────────────────────
+
+def _layout_file() -> Path:
+    """Return the disk path for the window layout cache."""
+    return _ensure_cache_dir() / "wm_layout.json"
+
+
+@app.get("/api/layout")
+def get_layout():
+    """Return the saved window manager layout state."""
+    path = _layout_file()
+    if not path.exists():
+        return JSONResponse({"layout": None}, status_code=200)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data
+    except (json.JSONDecodeError, OSError):
+        return JSONResponse({"layout": None}, status_code=200)
+
+
+@app.post("/api/layout")
+async def save_layout(request: Request):
+    """Save window manager layout state to disk."""
+    body = await request.json()
+    path = _layout_file()
+    try:
+        path.write_text(json.dumps(body), encoding="utf-8")
+    except OSError:
+        return JSONResponse({"error": "Failed to write cache"}, status_code=500)
+    return {"status": "ok"}
+
+
 # Serve the frontend
 _frontend_dir = Path(__file__).parent.parent / "frontend"
 if _frontend_dir.is_dir():

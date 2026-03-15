@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VibeCodingAssistant — Architecture Graph</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="/static/wm.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -25,10 +26,146 @@
     height: 100vh;
   }
 
-  /* Floating drill navigation */
+  /* ── Window Manager ──────────────────────────────────────── */
+  #wm-toolbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 32px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 10px; gap: 8px;
+    z-index: 9000; font-size: 12px;
+  }
+  .wm-toolbar-title {
+    font-weight: 600; color: var(--accent); margin-right: 8px;
+    font-size: 12px; letter-spacing: 0.3px;
+  }
+  .wm-toolbar-group { position: relative; }
+  #wm-view-btn, #wm-reset-btn {
+    background: none; border: 1px solid transparent; color: var(--text-muted);
+    cursor: pointer; font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    font-family: inherit;
+  }
+  #wm-view-btn:hover, #wm-reset-btn:hover {
+    background: var(--border); color: var(--text); border-color: var(--border);
+  }
+  #wm-view-menu {
+    display: none; position: absolute; top: 100%; left: 0; min-width: 200px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 0; z-index: 9999;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); margin-top: 4px;
+  }
+  #wm-view-menu.open { display: block; }
+  .wm-view-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; cursor: pointer; font-size: 12px; color: var(--text-muted);
+  }
+  .wm-view-item:hover { background: var(--border); color: var(--text); }
+  .wm-view-item.active { color: var(--text); }
+  .wm-view-check { width: 16px; text-align: center; color: var(--accent); font-weight: bold; }
+
+  #wm-root {
+    position: fixed; top: 32px; left: 0; right: 0; bottom: 0;
+    overflow: hidden;
+  }
+
+  .wm-split {
+    display: flex; width: 100%; height: 100%;
+    min-width: 0; min-height: 0;
+  }
+  .wm-split-horizontal { flex-direction: row; }
+  .wm-split-vertical   { flex-direction: column; }
+  .wm-split-pane {
+    overflow: hidden; position: relative;
+    min-width: 0; min-height: 0;
+  }
+  .wm-split-second { flex: 1 1 auto; }
+
+  .wm-splitter {
+    flex-shrink: 0; background: var(--border); transition: background 0.15s;
+    z-index: 10;
+  }
+  .wm-splitter-horizontal { width: 4px; cursor: col-resize; }
+  .wm-splitter-vertical   { height: 4px; cursor: row-resize; }
+  .wm-splitter:hover, body.wm-resizing .wm-splitter { background: var(--accent); }
+
+  .wm-panel {
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+    background: var(--bg);
+  }
+  .wm-panel-titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 8px; height: 26px; min-height: 26px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    font-size: 11px; color: var(--text-muted); cursor: grab; user-select: none;
+  }
+  .wm-panel-titlebar:active { cursor: grabbing; }
+  .wm-panel-titlebar-left { display: flex; align-items: center; gap: 5px; overflow: hidden; }
+  .wm-panel-icon { font-size: 12px; }
+  .wm-panel-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .wm-panel-actions { display: flex; gap: 2px; flex-shrink: 0; }
+  .wm-panel-actions button {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    font-size: 12px; padding: 2px 5px; border-radius: 3px; line-height: 1;
+  }
+  .wm-panel-actions button:hover { background: var(--border); color: var(--text); }
+  .wm-panel-content {
+    flex: 1 1 auto; overflow: hidden; position: relative;
+    min-width: 0; min-height: 0;
+  }
+
+  .wm-tab-container {
+    width: 100%; height: 100%; display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+  }
+  .wm-tab-bar {
+    display: flex; background: var(--bg); border-bottom: 1px solid var(--border);
+    overflow-x: auto; flex-shrink: 0; min-height: 28px;
+  }
+  .wm-tab {
+    padding: 5px 12px; font-size: 11px; color: var(--text-muted); cursor: pointer;
+    border-bottom: 2px solid transparent; white-space: nowrap;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .wm-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .wm-tab:hover  { color: var(--text); }
+  .wm-tab-close {
+    font-size: 10px; opacity: 0.5; cursor: pointer; margin-left: 2px;
+  }
+  .wm-tab-close:hover { opacity: 1; }
+  .wm-tab-content-area {
+    flex: 1 1 auto; overflow: hidden; position: relative;
+    min-width: 0; min-height: 0;
+  }
+
+  .wm-floating-panel {
+    position: fixed; z-index: 8000;
+    width: 500px; height: 400px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    display: flex; flex-direction: column; overflow: hidden;
+    resize: both; min-width: 200px; min-height: 120px;
+  }
+  .wm-floating-titlebar { border-radius: 8px 8px 0 0; }
+  .wm-floating-content  { overflow: auto; }
+
+  .wm-dock-ghost {
+    position: fixed; z-index: 10000; padding: 6px 16px;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: 6px; font-size: 12px; color: var(--text);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4); pointer-events: none;
+    white-space: nowrap;
+  }
+  body.wm-resizing *, body.wm-resizing-horizontal *, body.wm-resizing-vertical *, body.wm-docking * { cursor: inherit !important; }
+  body.wm-resizing { cursor: col-resize; }
+  body.wm-docking  { cursor: grabbing;   }
+
+  /* ── Back button ─────────────────────────────────────────── */
   #back-btn {
     position: fixed;
-    top: 12px;
+    top: 38px;
     left: 12px;
     z-index: 9999;
     padding: 8px 12px;
@@ -44,24 +181,15 @@
   #back-btn.visible { display: inline-flex; align-items: center; }
   #back-btn:hover { border-color: var(--accent); }
 
-  /* Graph panels wrapper */
-  #graph-panels {
-    position: fixed;
-    top: 0; left: 0;
-    right: 340px;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
+  /* ── Panels (WM-managed) ─────────────────────────────────── */
   #graph-container {
     position: relative;
-    flex: 0 0 40%;
-    border-bottom: 2px solid var(--border);
+    width: 100%; height: 100%;
     overflow: hidden;
   }
 
-  #graph-container .panel-label {
+  #graph-container .panel-label,
+  #zoom-container .panel-label {
     position: absolute;
     top: 8px;
     right: 12px;
@@ -79,25 +207,10 @@
 
   #zoom-container {
     position: relative;
-    flex: 1 1 60%;
+    width: 100%; height: 100%;
     overflow: hidden;
   }
 
-  #zoom-container .panel-label {
-    position: absolute;
-    top: 8px;
-    right: 12px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--text-muted);
-    background: var(--surface);
-    padding: 3px 8px;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    z-index: 10;
-    pointer-events: none;
-  }
 
   svg { width: 100%; height: 100%; }
 
@@ -186,18 +299,12 @@
     white-space: nowrap;
   }
 
-  /* Detail panel */
+  /* Detail panel (WM-managed, no fixed positioning) */
   #detail-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 340px;
-    bottom: 0;
     background: var(--surface);
-    border-left: 1px solid var(--border);
     padding: 20px;
     overflow-y: auto;
-    z-index: 90;
+    width: 100%; height: 100%;
   }
 
   #detail-panel h2 {
@@ -292,17 +399,13 @@
     flex-shrink: 0;
   }
 
-  /* Legend */
+  /* Legend (WM-managed) */
   #legend {
-    position: fixed;
-    bottom: 16px;
-    left: 16px;
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
     padding: 12px 16px;
     font-size: 11px;
-    z-index: 90;
+    overflow-y: auto;
+    width: 100%; height: 100%;
   }
   #legend h4 {
     font-size: 10px;
@@ -330,14 +433,13 @@
   .legend-edge.dotted { border-top-style: dotted; }
 
   /* Loading */
-  .loading-indicator {
-    position: absolute;
+  #loading {
+    position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     font-size: 14px;
     color: var(--text-muted);
-    z-index: 20;
-    pointer-events: none;
+    z-index: 9500;
   }
 
   /* Overview cursor */
@@ -348,31 +450,75 @@
 
 <button id="back-btn">← Back</button>
 
-<div id="graph-panels">
-  <div id="graph-container">
-    <div class="panel-label">Overview</div>
-    <div class="loading-indicator">Analyzing codebase…</div>
-    <svg id="graph-svg"></svg>
+<div id="wm-toolbar">
+  <span class="wm-toolbar-title">VibeCodingAssistant</span>
+  <div class="wm-toolbar-group">
+    <button id="wm-view-btn">View ▾</button>
+    <div id="wm-view-menu"></div>
   </div>
-  <div id="zoom-container">
-    <div class="panel-label">Detail View — click overview to navigate</div>
-    <div class="loading-indicator">Analyzing codebase…</div>
-    <svg id="zoom-svg"></svg>
-  </div>
+  <button id="wm-reset-btn" title="Reset layout to default">⟲ Reset</button>
 </div>
 
-<div id="detail-panel">
-  <div id="detail-content">
-    <div id="detail-placeholder">Hover over a node<br>to see details</div>
-  </div>
-</div>
+<div id="wm-root"></div>
 
-<div id="legend">
-  <!-- populated dynamically by updateLegend() -->
-</div>
-
+<div id="loading">Analyzing codebase…</div>
 
 <script>
+// ================================================================
+// PANEL REGISTRATIONS — define each panel for the Window Manager
+// ================================================================
+PanelRegistry.register({
+  id: 'overview',
+  title: 'Overview',
+  icon: '🗺️',
+  contentId: 'graph-container',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    content.innerHTML = '<div class="panel-label">Overview</div><svg id="graph-svg" style="width:100%;height:100%"></svg>';
+  },
+});
+
+PanelRegistry.register({
+  id: 'detail-view',
+  title: 'Detail View',
+  icon: '🔍',
+  contentId: 'zoom-container',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    content.innerHTML = '<div class="panel-label">Detail View — click overview to navigate</div><svg id="zoom-svg" style="width:100%;height:100%"></svg>';
+  },
+});
+
+PanelRegistry.register({
+  id: 'node-inspector',
+  title: 'Node Inspector',
+  icon: '📋',
+  contentId: 'detail-panel',
+  contentClass: 'wm-inspector-content',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    content.innerHTML = '<div id="detail-content"><div id="detail-placeholder">Hover over a node<br>to see details</div></div>';
+  },
+});
+
+PanelRegistry.register({
+  id: 'legend',
+  title: 'Legend',
+  icon: '🏷️',
+  contentId: 'legend',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    // updateLegend() will populate this
+  },
+});
+
+// ================================================================
+// APPLICATION CODE
+// ================================================================
 const API_BASE = window.location.origin;
 const ABSTRACT_NODES = true;
 
@@ -507,6 +653,8 @@ const NODE_KIND_META = {
 const NODE_KIND_ORDER = ["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
 
 function updateLegend(graphData) {
+  var legendEl = document.getElementById("legend");
+  if (!legendEl) return;
   const presentKinds = new Set((graphData.nodes || []).map(n => n.kind));
   let html = "<h4>Nodes</h4>";
   for (const kind of NODE_KIND_ORDER) {
@@ -521,7 +669,7 @@ function updateLegend(graphData) {
   <div class="legend-item"><div class="legend-edge dotted" style="border-color:#484f58"></div> Contains</div>
   <div class="legend-item"><div class="legend-edge" style="border-color:#d2a8ff"></div> Instantiates</div>
   <div class="legend-item"><div class="legend-edge dashed" style="border-color:#7ee787"></div> Uses Type</div>`;
-  document.getElementById("legend").innerHTML = html;
+  legendEl.innerHTML = html;
 }
 
 // ── Zoom detail view state ─────────────────────────────────────────
@@ -594,11 +742,11 @@ async function loadGraph() {
       edges: rootGraphData.intermediate_edges || [],
     };
 
-    document.querySelectorAll(".loading-indicator").forEach(el => el.style.display = "none");
+    document.getElementById("loading").style.display = "none";
     updateLegend(rootGraphData);
     _setGraphView(rootGraphData, "Overview");
   } catch (err) {
-    document.querySelectorAll(".loading-indicator").forEach(el => el.textContent = `Error: ${err.message}`);
+    document.getElementById("loading").textContent = `Error: ${err.message}`;
   }
 }
 
@@ -614,7 +762,8 @@ function _setGraphView(nextGraph, label) {
   currentGraphLabel = label || "Overview";
   updateBackButton();
   updateLegend(graphData);
-  document.getElementById("detail-panel").classList.remove("open");
+  var dp = document.getElementById("detail-panel");
+  if (dp) dp.classList.remove("open");
   renderGraph();
 }
 
@@ -983,9 +1132,11 @@ function snapNodesToGrid(nodeData, svg, g, node, link) {
   link.attr("d", edgePath);
   // Fit immediately (no animation) then animate a refined fit
   const container = document.getElementById("graph-container");
+  if (!container) return;
   fitGraphToViewport(svg, window._zoomBehavior, nodeData, container.clientWidth, container.clientHeight, 20, false);
   setTimeout(function() {
     const c = document.getElementById("graph-container");
+    if (!c) return;
     fitGraphToViewport(svg, window._zoomBehavior, nodeData, c.clientWidth, c.clientHeight, 20, true);
   }, 50);
 }
@@ -998,6 +1149,7 @@ function ensureAllNodesVisible(svg, zoomBehavior, nodeData) {
   if (!nodeData || nodeData.length === 0) return;
 
   const container = document.getElementById("graph-container");
+  if (!container) return;
   const width = container.clientWidth;
   const height = container.clientHeight;
 
@@ -1026,6 +1178,7 @@ function centerDetailOnGraphPoint(graphX, graphY, animate) {
   if (animate === undefined) animate = true;
   if (!_zoomSvg || !_zoomDetailBehavior) return;
   const zoomContainer = document.getElementById("zoom-container");
+  if (!zoomContainer) return;
   const zw = zoomContainer.clientWidth;
   const zh = zoomContainer.clientHeight;
   const fallbackScale = (_overviewTransform ? _overviewTransform.k : 1) * DETAIL_ZOOM_SCALE;
@@ -1041,6 +1194,7 @@ function updateViewportIndicator() {
   if (!_viewportRect || !_zoomDetailTransform || !_overviewTransform) return;
 
   const zoomContainer = document.getElementById("zoom-container");
+  if (!zoomContainer) return;
   const zw = zoomContainer.clientWidth;
   const zh = zoomContainer.clientHeight;
 
@@ -1067,10 +1221,12 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   cleanupDetailView();
 
   const zoomSvg = d3.select("#zoom-svg");
+  if (zoomSvg.empty()) return;  // detail-view panel not mounted
   _zoomSvg = zoomSvg;
   _overviewSvgRef = overviewSvg;
 
   const zoomContainer = document.getElementById("zoom-container");
+  if (!zoomContainer) return;
   const zw = zoomContainer.clientWidth;
   const zh = zoomContainer.clientHeight;
 
@@ -1201,12 +1357,15 @@ function renderGraph() {
   cleanupDetailView();
 
   const svg = d3.select("#graph-svg");
+  if (svg.empty()) return;  // overview panel not mounted
   svg.selectAll("*").remove();
   svg.on(".detailnav", null);
 
   const container = document.getElementById("graph-container");
+  if (!container) return;
   const width = container.clientWidth;
   const height = container.clientHeight;
+  if (width <= 0 || height <= 0) return;
 
   let didInitialFit = false;
   let autoFitActive = true;
@@ -1310,6 +1469,7 @@ function renderGraph() {
 
     // Center the detail view on the graph point under the cursor
     const zoomContainer = document.getElementById("zoom-container");
+    if (!zoomContainer) return;
     const zw = zoomContainer.clientWidth;
     const zh = zoomContainer.clientHeight;
     const dtx = zw / 2 - graphX * newK;
@@ -1409,7 +1569,7 @@ function renderGraph() {
     link.attr("d", edgePath);
     // Use current container dimensions, not the captured width/height
     const ctr = document.getElementById("graph-container");
-    fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
+    if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
     var eid1 = setTimeout(function() {
       ensureAllNodesVisible(svg, zoomBehavior, nodeData);
     }, 100);
@@ -1460,7 +1620,7 @@ function renderGraph() {
       node.attr("transform", d => `translate(${d.x},${d.y})`);
       link.attr("d", edgePath);
       const ctr = document.getElementById("graph-container");
-      fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
+      if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
       var eidGrid = setTimeout(function() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
       }, 100);
@@ -1572,6 +1732,7 @@ function selectNode(d) {
   selectedNode = d;
   highlightConnected(d);
   const content = document.getElementById("detail-content");
+  if (!content) return;
   const incoming = graphData.edges.filter(e => (_nid(e.target) === d.id));
   const outgoing = graphData.edges.filter(e => (_nid(e.source) === d.id));
   const findNodeName = function(id) { const realId = typeof id === "object" ? id.id : id; const n = graphData.nodes.find(n => n.id === realId); return n ? n.name : realId; };
@@ -1588,11 +1749,13 @@ function selectNode(d) {
 }
 
 function showPlaceholder() {
-  document.getElementById("detail-content").innerHTML = `<div id="detail-placeholder">Hover over a node<br>to see details</div>`;
+  var el = document.getElementById("detail-content");
+  if (el) el.innerHTML = `<div id="detail-placeholder">Hover over a node<br>to see details</div>`;
 }
 
 function populatePanel(d) {
   const content = document.getElementById("detail-content");
+  if (!content) return;
   const incoming = graphData.edges.filter(e => _nid(e.target) === d.id);
   const outgoing = graphData.edges.filter(e => _nid(e.source) === d.id);
   const findNodeName = function(id) { const n = graphData.nodes.find(n => n.id === _nid(id)); return n ? n.name : _nid(id); };
@@ -1687,9 +1850,17 @@ document.getElementById("back-btn").addEventListener("click", function() {
 });
 
 // ── Resize ─────────────────────────────────────────────────────────
-window.addEventListener("resize", function() { if (graphData) renderGraph(); });
+var _wmResizeDebounce = null;
+function _handleResize() {
+  if (_wmResizeDebounce) clearTimeout(_wmResizeDebounce);
+  _wmResizeDebounce = setTimeout(function () {
+    if (graphData) renderGraph();
+  }, 150);
+}
+window.addEventListener("resize", _handleResize);
 
 // ── Boot ───────────────────────────────────────────────────────────
+WindowManager.init(document.getElementById("wm-root"));
 loadGraph();
 </script>
 
