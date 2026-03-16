@@ -1347,6 +1347,135 @@ function _setActiveSearchResult(index) {
   }
 }
 
+/**
+ * Find the chain of container (metaclass / group) nodes that must be
+ * drilled into to reach `targetId`, starting from the root overview graph.
+ *
+ * Returns an array of node objects: [topLevelContainer, ..., immediateParent]
+ * where each entry is a metaclass/group node whose member_ids include the
+ * next entry (or the target itself for the last element).
+ *
+ * Returns [] if the target lives directly in the root graph (no drilling needed),
+ * or null if the target can't be located at all.
+ */
+function _findContainerChain(targetId) {
+  if (!rootGraphData || !fullGraphData) return null;
+
+  // Quick check: is it already a top-level node?
+  if (rootGraphData.nodes.find(function(n) { return n.id === targetId; })) {
+    return [];
+  }
+
+  // Build a lookup of ALL container nodes (metaclass / group) across every level
+  var allContainers = [];  // { node, source }
+  var _containerKinds = new Set(["metaclass", "test_group", "model_group",
+    "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+
+  rootGraphData.nodes.forEach(function(n) {
+    if (_containerKinds.has(n.kind) && n.member_ids && n.member_ids.length > 0) {
+      allContainers.push(n);
+    }
+  });
+  if (intermediateGraphData && intermediateGraphData.nodes) {
+    intermediateGraphData.nodes.forEach(function(n) {
+      if (_containerKinds.has(n.kind) && n.member_ids && n.member_ids.length > 0) {
+        // Avoid duplicates
+        if (!allContainers.find(function(c) { return c.id === n.id; })) {
+          allContainers.push(n);
+        }
+      }
+    });
+  }
+
+  // Build a map: childId → parentContainerNode
+  var childToParent = new Map();
+  allContainers.forEach(function(container) {
+    (container.member_ids || []).forEach(function(mid) {
+      // If multiple containers claim the same child, prefer the one
+      // that is itself contained in another (= deeper in hierarchy)
+      if (!childToParent.has(mid)) {
+        childToParent.set(mid, container);
+      }
+    });
+  });
+
+  // Walk up from target to root
+  var chain = [];
+  var current = targetId;
+  var visited = new Set();
+  var maxDepth = 20;
+  while (maxDepth-- > 0) {
+    var parent = childToParent.get(current);
+    if (!parent) break;
+    if (visited.has(parent.id)) break;  // cycle guard
+    visited.add(parent.id);
+    chain.unshift(parent);  // prepend
+    // Is this parent a top-level node in rootGraphData?
+    if (rootGraphData.nodes.find(function(n) { return n.id === parent.id; })) {
+      return chain;
+    }
+    current = parent.id;
+  }
+
+  // Fallback: target might be a method inside a class
+  // Check if targetId is a method and find its parent class
+  var targetNode = null;
+  if (fullGraphData) {
+    targetNode = fullGraphData.nodes.find(function(n) { return n.id === targetId; });
+  }
+  if (targetNode && targetNode.kind === "method") {
+    // Find the parent class via contains edge
+    var parentClassId = null;
+    fullGraphData.edges.forEach(function(e) {
+      if (e.kind === "contains" && _nid(e.target) === targetId) {
+        parentClassId = _nid(e.source);
+      }
+    });
+    if (parentClassId) {
+      var parentChain = _findContainerChain(parentClassId);
+      if (parentChain !== null) {
+        var parentClassNode = fullGraphData.nodes.find(function(n) { return n.id === parentClassId; });
+        if (parentClassNode) {
+          parentChain.push(parentClassNode);
+          return parentChain;
+        }
+      }
+    }
+  }
+
+  // Could not find a path — return the chain we have (might be partial)
+  return chain.length > 0 ? chain : null;
+}
+
+/**
+ * After a graph re-render, wait for layout to settle then center + highlight
+ * the target node.  Polls until the node has x/y coordinates.
+ */
+function _focusNodeAfterRender(targetId, entry) {
+  var attempts = 0;
+  var maxAttempts = 60;  // up to 3 seconds
+  var poller = setInterval(function() {
+    attempts++;
+    // Find the node in current graphData with x/y set by the layout engine
+    var node = null;
+    if (window._nodeData) {
+      node = window._nodeData.find(function(n) { return n.id === targetId; });
+    }
+    if (node && node.x != null && node.y != null) {
+      clearInterval(poller);
+      centerDetailOnGraphPoint(node.x, node.y, true);
+      highlightConnected(node);
+      _inspectorPinned = true;
+      populatePanel(node);
+    } else if (attempts >= maxAttempts) {
+      clearInterval(poller);
+      // Couldn't find positioned node — at least show info
+      _inspectorPinned = true;
+      populatePanel(entry);
+    }
+  }, 50);
+}
+
 function _selectSearchResult(entry) {
   if (!entry) return;
 
@@ -1357,23 +1486,83 @@ function _selectSearchResult(entry) {
   if (container) container.classList.remove('open');
   if (input) input.blur();
 
-  // Find the node in the current graph data; if not present, check if it's in fullGraphData
-  var node = null;
-  if (graphData && graphData.nodes) {
-    node = graphData.nodes.find(function(n) { return n.id === entry.id; });
-  }
+  var targetId = entry.id;
 
+  // 1. Check if node is in the current graph view and already positioned
+  var node = null;
+  if (window._nodeData) {
+    node = window._nodeData.find(function(n) { return n.id === targetId; });
+  }
   if (node && node.x != null && node.y != null) {
-    // Node is in the current view — navigate to it
     centerDetailOnGraphPoint(node.x, node.y, true);
     highlightConnected(node);
     _inspectorPinned = true;
     populatePanel(node);
-  } else {
-    // Node is not in current view — show its info in the inspector
-    _inspectorPinned = true;
-    populatePanel(entry);
+    return;
   }
+
+  // 2. Node is not in the current view — find the drill-down path
+  var chain = _findContainerChain(targetId);
+
+  if (chain === null || chain.length === 0) {
+    // Can't find a path — reset to root overview and try there
+    if (currentGraphLabel !== "Overview" && rootGraphData) {
+      graphStack = [];
+      _setGraphView(rootGraphData, "Overview");
+      _focusNodeAfterRender(targetId, entry);
+    } else {
+      // Last resort: just show info
+      _inspectorPinned = true;
+      populatePanel(entry);
+    }
+    return;
+  }
+
+  // 3. Reset to root overview first, then drill down the chain
+  graphStack = [];
+  _setGraphView(rootGraphData, "Overview");
+
+  // Drill down through each container in the chain
+  // We need to do this sequentially since each drill changes graphData
+  function drillStep(idx) {
+    if (idx >= chain.length) {
+      // We've drilled to the deepest container — target should now be visible
+      _focusNodeAfterRender(targetId, entry);
+      return;
+    }
+
+    var containerNode = chain[idx];
+
+    // Wait for current graph to finish rendering so nodes have positions
+    var attempts = 0;
+    var poller = setInterval(function() {
+      attempts++;
+      // Find the container in the current graphData
+      var gNode = null;
+      if (window._nodeData) {
+        gNode = window._nodeData.find(function(n) { return n.id === containerNode.id; });
+      }
+      if (!gNode && graphData && graphData.nodes) {
+        gNode = graphData.nodes.find(function(n) { return n.id === containerNode.id; });
+      }
+
+      if (gNode || attempts >= 40) {
+        clearInterval(poller);
+        // Drill into this container
+        if (gNode) {
+          drillIntoNode(gNode);
+        } else {
+          // Container not found in current view — use the data we have
+          drillIntoNode(containerNode);
+        }
+        // Continue to next level after a brief delay for render
+        setTimeout(function() { drillStep(idx + 1); }, 100);
+      }
+    }, 50);
+  }
+
+  // Start drilling from the first container
+  drillStep(0);
 }
 
 // Wire up search input
