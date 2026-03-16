@@ -15,6 +15,7 @@ from backend.analyzer import (
     analyze_codebase, abstract_graph,
     _load_from_cache, _save_to_cache, _ensure_cache_dir,
 )
+from backend.insights import detect_insights
 
 app = FastAPI(title="VibeCodingAssistant", version="0.1.0")
 
@@ -93,6 +94,22 @@ def get_graph(
 
     payload = _get_or_analyze(abs_path, abstract)
     return payload
+
+
+@app.get("/api/insights")
+def get_insights():
+    """Run pattern detection rules against the full (non-abstract) graph."""
+    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
+    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
+    abs_path = os.path.abspath(target_path)
+
+    if not os.path.isdir(abs_path):
+        return JSONResponse({"error": "No analysis run yet."}, status_code=404)
+
+    # Run detection on the full (non-abstract) graph
+    graph_dict = _get_or_analyze(abs_path, abstract=False)
+    insights = detect_insights(graph_dict)
+    return {"insights": insights, "count": len(insights)}
 
 
 # ── Position cache endpoints ────────────────────────────────────────

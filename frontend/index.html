@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DANTE IDE — Tactical Architecture</title>
+<title>Dante Coding Assistant — Tactical Architecture</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -90,6 +90,68 @@
   .wm-view-item:hover { background:var(--olive); color:var(--text); }
   .wm-view-item.active { color:var(--green); }
   .wm-view-check { width:16px; text-align:center; color:var(--green); font-weight:bold; }
+
+  /* ── Search bar ──────────────────────────────────────────── */
+  .search-container {
+    position:relative; flex:1; max-width:360px; margin:0 8px;
+  }
+  .search-input-wrap {
+    display:flex; align-items:center; gap:5px;
+    background:var(--surface); border:1px solid var(--border);
+    padding:2px 8px; clip-path:var(--clip-sm); transition:border-color .15s;
+  }
+  .search-input-wrap:focus-within {
+    border-color:var(--accent-dim); box-shadow:0 0 8px var(--accent-glow);
+  }
+  .search-icon { color:var(--text-muted); font-size:11px; flex-shrink:0; }
+  #search-input {
+    background:none; border:none; outline:none;
+    color:var(--text); font-family:'Share Tech Mono',monospace;
+    font-size:11px; width:100%; padding:2px 0;
+  }
+  #search-input::placeholder { color:var(--text-muted); opacity:.6; }
+  .search-kbd {
+    font-size:9px; color:var(--text-muted); border:1px solid var(--border);
+    padding:0 4px; border-radius:2px; flex-shrink:0; line-height:1.6;
+    font-family:'Share Tech Mono',monospace;
+  }
+  #search-results {
+    display:none; position:absolute; top:100%; left:0; right:0;
+    margin-top:4px; max-height:340px; overflow-y:auto;
+    background:var(--surface); border:1px solid var(--border-hi);
+    box-shadow:0 8px 28px rgba(0,0,0,.65); z-index:9999;
+    clip-path:var(--clip);
+  }
+  #search-results.open { display:block; }
+  .search-result {
+    display:flex; align-items:center; gap:8px;
+    padding:6px 12px; cursor:pointer; font-size:12px;
+    color:var(--text); transition:background .1s;
+  }
+  .search-result:hover, .search-result.active {
+    background:var(--olive); color:var(--accent);
+  }
+  .search-result-icon { flex-shrink:0; font-size:10px; }
+  .search-result-name {
+    font-family:'Share Tech Mono',monospace; font-weight:600;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;
+  }
+  .search-result-name mark {
+    background:none; color:var(--accent); font-weight:700;
+  }
+  .search-result-kind {
+    font-size:9px; text-transform:uppercase; letter-spacing:1px;
+    color:var(--text-muted); flex-shrink:0;
+    padding:1px 5px; border:1px solid var(--border); border-radius:2px;
+  }
+  .search-result-file {
+    font-size:9px; color:var(--text-muted); flex-shrink:0;
+    max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .search-empty {
+    padding:16px; text-align:center; color:var(--text-muted);
+    font-size:11px; text-transform:uppercase; letter-spacing:1px;
+  }
 
   #wm-root { position:fixed; top:34px; left:0; right:0; bottom:0; overflow:hidden; }
 
@@ -445,6 +507,94 @@
 
   /* Overview cursor */
   #graph-container svg { cursor:crosshair; }
+
+  /* ── Insights panel ──────────────────────────────────────── */
+  #insights-panel {
+    background:var(--surface); padding:0; font-size:12px;
+    overflow-y:auto; width:100%; height:100%;
+  }
+  .insights-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; border-bottom:1px solid var(--border);
+    position:sticky; top:0; z-index:2;
+    background:var(--surface);
+  }
+  .insights-header h4 {
+    font-size:10px; text-transform:uppercase; letter-spacing:2px;
+    color:var(--khaki); margin:0; font-weight:700;
+  }
+  .insights-badge {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:20px; height:18px; padding:0 5px;
+    font-size:10px; font-weight:700; border-radius:9px;
+    letter-spacing:0;
+  }
+  .insights-badge.error { background:#d44a3233; color:#d44a32; border:1px solid #d44a3244; }
+  .insights-badge.warning { background:#e8a82433; color:#e8a824; border:1px solid #e8a82444; }
+  .insights-badge.info { background:#5ab8a833; color:#5ab8a8; border:1px solid #5ab8a844; }
+  .insights-badge.mixed { background:#b8a87833; color:#b8a878; border:1px solid #b8a87844; }
+  .insights-summary {
+    display:flex; gap:6px; padding:6px 14px;
+    border-bottom:1px solid var(--border);
+    font-size:10px;
+  }
+  .insights-summary-item {
+    display:flex; align-items:center; gap:3px;
+    color:var(--text-muted); font-weight:600;
+    text-transform:uppercase; letter-spacing:.5px;
+  }
+  .insights-summary-dot {
+    width:8px; height:8px; border-radius:50%;
+  }
+  .insights-list { padding:4px 0; }
+  .insight-item {
+    display:flex; align-items:flex-start; gap:10px;
+    padding:8px 14px; cursor:pointer; transition:background .1s;
+    border-bottom:1px solid rgba(42,48,32,.4);
+  }
+  .insight-item:hover { background:var(--surface-alt); }
+  .insight-item.active { background:var(--olive); }
+  .insight-severity-icon {
+    width:20px; height:20px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; margin-top:1px;
+  }
+  .insight-body { flex:1; min-width:0; }
+  .insight-title {
+    font-size:12px; font-weight:700; color:var(--text);
+    letter-spacing:.3px; margin-bottom:2px;
+    word-break:break-word;
+  }
+  .insight-title.error { color:#d44a32; }
+  .insight-title.warning { color:#e8a824; }
+  .insight-title.info { color:#5ab8a8; }
+  .insight-desc {
+    font-size:11px; color:var(--text-muted);
+    font-family:'Share Tech Mono',monospace;
+    line-height:1.4; word-break:break-word;
+  }
+  .insight-rule {
+    font-size:9px; color:var(--text-muted); opacity:.7;
+    text-transform:uppercase; letter-spacing:1px;
+    margin-top:3px;
+  }
+  .insights-empty {
+    padding:30px 20px; text-align:center; color:var(--green);
+    font-size:13px; text-transform:uppercase; letter-spacing:2px;
+    font-weight:600; line-height:1.8;
+  }
+  .insights-empty::before {
+    content:'✓'; display:block; font-size:24px; margin-bottom:8px;
+    color:var(--green); text-shadow:0 0 12px rgba(109,189,74,.4);
+  }
+  .insights-loading {
+    padding:30px 20px; text-align:center; color:var(--accent);
+    font-size:12px; text-transform:uppercase; letter-spacing:2px;
+    font-weight:600; animation:loadPulse 2s ease-in-out infinite;
+  }
+  .insights-error {
+    padding:20px; text-align:center; color:var(--red); font-size:12px;
+  }
 </style>
 </head>
 <body>
@@ -452,6 +602,14 @@
 <button id="back-btn">← Back</button>
 
 <div id="wm-toolbar">
+  <div class="search-container">
+    <div class="search-input-wrap">
+      <span class="search-icon">🔍</span>
+      <input id="search-input" type="text" placeholder="Search classes, methods…" autocomplete="off" spellcheck="false" aria-label="Search nodes">
+      <span class="search-kbd">/</span>
+    </div>
+    <div id="search-results"></div>
+  </div>
   <div class="wm-toolbar-group">
     <button id="wm-view-btn">View ▾</button>
     <div id="wm-view-menu"></div>
@@ -831,6 +989,454 @@ PanelRegistry.register({
   },
 });
 
+// ── Insights panel ─────────────────────────────────────────────────
+var _insightsData = null;
+var _insightsLoading = false;
+var _activeInsightIndex = -1;
+
+var _SEVERITY_ICONS = { error: '🔴', warning: '🟡', info: '🔵' };
+var _SEVERITY_LABELS = { error: 'Error', warning: 'Warning', info: 'Info' };
+
+function _renderInsightsPanel(container, insights) {
+  if (!insights || insights.length === 0) {
+    container.innerHTML = '<div class="insights-empty">No architectural issues detected<br>Codebase looks healthy</div>';
+    return;
+  }
+
+  // Summary counts
+  var counts = { error: 0, warning: 0, info: 0 };
+  insights.forEach(function(i) { counts[i.severity] = (counts[i.severity] || 0) + 1; });
+
+  var html = '<div class="insights-header"><h4>Insights</h4>';
+  html += '<span class="insights-badge mixed">' + insights.length + '</span>';
+  html += '</div>';
+
+  html += '<div class="insights-summary">';
+  if (counts.error > 0) html += '<div class="insights-summary-item"><div class="insights-summary-dot" style="background:#d44a32"></div>' + counts.error + ' errors</div>';
+  if (counts.warning > 0) html += '<div class="insights-summary-item"><div class="insights-summary-dot" style="background:#e8a824"></div>' + counts.warning + ' warnings</div>';
+  if (counts.info > 0) html += '<div class="insights-summary-item"><div class="insights-summary-dot" style="background:#5ab8a8"></div>' + counts.info + ' info</div>';
+  html += '</div>';
+
+  html += '<div class="insights-list">';
+  for (var i = 0; i < insights.length; i++) {
+    var ins = insights[i];
+    var icon = _SEVERITY_ICONS[ins.severity] || '●';
+    html += '<div class="insight-item" data-insight-index="' + i + '">' +
+      '<div class="insight-severity-icon">' + icon + '</div>' +
+      '<div class="insight-body">' +
+        '<div class="insight-title ' + ins.severity + '">' + _escHtml(ins.title) + '</div>' +
+        '<div class="insight-desc">' + _escHtml(ins.description) + '</div>' +
+        '<div class="insight-rule">' + ins.rule_name.replace(/_/g, ' ') + '</div>' +
+      '</div></div>';
+  }
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Click handler for each insight
+  container.querySelectorAll('.insight-item').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var idx = parseInt(el.dataset.insightIndex, 10);
+      _selectInsight(idx, container);
+    });
+  });
+}
+
+function _selectInsight(idx, container) {
+  if (!_insightsData || idx < 0 || idx >= _insightsData.length) return;
+  var ins = _insightsData[idx];
+  _activeInsightIndex = idx;
+
+  // Highlight the active row
+  if (container) {
+    container.querySelectorAll('.insight-item').forEach(function(el) {
+      el.classList.toggle('active', parseInt(el.dataset.insightIndex, 10) === idx);
+    });
+  }
+
+  // Highlight affected nodes on the graph
+  _highlightInsightNodes(ins.affected_node_ids);
+
+  // Show first affected node in the inspector
+  if (ins.affected_node_ids.length > 0) {
+    var nodeId = ins.affected_node_ids[0];
+    var node = null;
+    if (graphData && graphData.nodes) {
+      node = graphData.nodes.find(function(n) { return n.id === nodeId; });
+    }
+    if (!node && fullGraphData && fullGraphData.nodes) {
+      node = fullGraphData.nodes.find(function(n) { return n.id === nodeId; });
+    }
+    if (node) {
+      _inspectorPinned = true;
+      populatePanel(node);
+      // Center the detail view on the node if it has coordinates
+      if (node.x != null && node.y != null) {
+        centerDetailOnGraphPoint(node.x, node.y, true);
+      }
+    }
+  }
+}
+
+function _highlightInsightNodes(affectedIds) {
+  if (!window._nodes || !window._links || !window._nodeData) return;
+
+  var affectedSet = new Set(affectedIds);
+
+  // ── Overview panel ──────────────────────────────────────────
+  window._nodes.selectAll('.node-rect')
+    .style('opacity', function(n) { return affectedSet.has(n.id) ? 1 : 0.12; })
+    .style('filter', function(n) { return affectedSet.has(n.id) ? 'brightness(1.3) drop-shadow(0 0 10px rgba(212,74,50,.5))' : null; });
+  window._nodes.selectAll('.node-title')
+    .style('opacity', function(n) { return affectedSet.has(n.id) ? 1 : 0.12; });
+  window._nodes.selectAll('.node-kind-inside')
+    .style('opacity', function(n) { return affectedSet.has(n.id) ? 1 : 0.12; });
+
+  // Highlight edges between affected nodes
+  window._links.style('opacity', function(e) {
+    var sid = _nid(e.source), tid = _nid(e.target);
+    if (affectedSet.has(sid) && affectedSet.has(tid)) return 0.9;
+    if (affectedSet.has(sid) || affectedSet.has(tid)) return 0.25;
+    return 0.04;
+  });
+
+  // ── Detail panel ────────────────────────────────────────────
+  var zoomSvg = d3.select('#zoom-svg');
+  zoomSvg.selectAll('.node-group').each(function() {
+    var el = d3.select(this);
+    var nid = el.attr('data-node-id');
+    if (!nid) return;
+    var isAffected = affectedSet.has(nid);
+    el.selectAll('.node-rect')
+      .style('opacity', isAffected ? 1 : 0.12)
+      .style('filter', isAffected ? 'brightness(1.3) drop-shadow(0 0 10px rgba(212,74,50,.5))' : null);
+    el.selectAll('.node-title').style('opacity', isAffected ? 1 : 0.12);
+    el.selectAll('.node-kind-inside').style('opacity', isAffected ? 1 : 0.12);
+  });
+  zoomSvg.selectAll('[data-edge-src]').each(function() {
+    var el = d3.select(this);
+    var sid = el.attr('data-edge-src'), tid = el.attr('data-edge-tgt');
+    if (affectedSet.has(sid) && affectedSet.has(tid)) el.style('opacity', 0.9);
+    else if (affectedSet.has(sid) || affectedSet.has(tid)) el.style('opacity', 0.25);
+    else el.style('opacity', 0.04);
+  });
+}
+
+function loadInsights(containerEl) {
+  var container = containerEl || document.getElementById('insights-panel');
+  if (!container) return;
+
+  if (_insightsData) {
+    _renderInsightsPanel(container, _insightsData);
+    return;
+  }
+
+  if (_insightsLoading) return;
+  _insightsLoading = true;
+  container.innerHTML = '<div class="insights-loading">Detecting patterns…</div>';
+
+  var apiBase = window.location.origin;
+  fetch(apiBase + '/api/insights')
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function(data) {
+      _insightsData = data.insights || [];
+      _insightsLoading = false;
+      var c = document.getElementById('insights-panel') || container;
+      if (c) _renderInsightsPanel(c, _insightsData);
+    })
+    .catch(function(err) {
+      _insightsLoading = false;
+      var c = document.getElementById('insights-panel') || container;
+      if (c) c.innerHTML = '<div class="insights-error">Error: ' + err.message + '</div>';
+    });
+}
+
+PanelRegistry.register({
+  id: 'insights',
+  title: 'Insights',
+  icon: '⚠️',
+  contentId: 'insights-panel',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    content.id = 'insights-panel';
+    loadInsights(content);
+  },
+});
+
+// ================================================================
+// TRIE-BASED PREDICTIVE SEARCH
+// ================================================================
+
+function TrieNode() {
+  this.children = {};
+  this.items = [];  // leaf entries at or below this node
+}
+
+function Trie() {
+  this.root = new TrieNode();
+}
+
+Trie.prototype.insert = function(key, item) {
+  var node = this.root;
+  for (var i = 0; i < key.length; i++) {
+    var ch = key[i];
+    if (!node.children[ch]) node.children[ch] = new TrieNode();
+    node = node.children[ch];
+    node.items.push(item);
+  }
+};
+
+Trie.prototype.search = function(prefix, maxResults) {
+  maxResults = maxResults || 20;
+  var node = this.root;
+  for (var i = 0; i < prefix.length; i++) {
+    var ch = prefix[i];
+    if (!node.children[ch]) return [];
+    node = node.children[ch];
+  }
+  // Return items at this node (all items whose key starts with prefix)
+  // Deduplicate by id
+  var seen = {};
+  var results = [];
+  for (var j = 0; j < node.items.length && results.length < maxResults; j++) {
+    var item = node.items[j];
+    if (!seen[item.id]) {
+      seen[item.id] = true;
+      results.push(item);
+    }
+  }
+  return results;
+};
+
+var _searchTrie = null;
+var _searchActiveIndex = -1;
+
+var _KIND_ICONS = {
+  "class": "◼", "method": "◆", "metaclass": "◈",
+  "test_group": "⬡", "model_group": "⬡", "config_group": "⬡",
+  "handler_group": "⬡", "utility_group": "⬡",
+  "exception_group": "⬡", "event_group": "⬡"
+};
+
+function buildSearchIndex() {
+  _searchTrie = new Trie();
+  if (!fullGraphData || !rootGraphData) return;
+
+  // Collect all unique nodes from every data source
+  var allNodes = new Map();
+  fullGraphData.nodes.forEach(function(n) { allNodes.set(n.id, n); });
+  rootGraphData.nodes.forEach(function(n) { allNodes.set(n.id, n); });
+  if (intermediateGraphData && intermediateGraphData.nodes) {
+    intermediateGraphData.nodes.forEach(function(n) { allNodes.set(n.id, n); });
+  }
+
+  allNodes.forEach(function(n) {
+    var entry = {
+      id: n.id, name: n.name, kind: n.kind,
+      qualified_name: n.qualified_name || '',
+      file_path: n.file_path || '',
+      line_start: n.line_start, line_end: n.line_end,
+      methods: n.methods, members: n.members, member_ids: n.member_ids,
+      bases: n.bases, docstring: n.docstring,
+      // Store references for navigation
+      _node: n
+    };
+
+    // Index by name (lowercase)
+    var nameLower = n.name.toLowerCase();
+    _searchTrie.insert(nameLower, entry);
+
+    // Also index by each word segment (e.g. "ArrayBase" → "array", "base")
+    var segments = n.name.replace(/([a-z])([A-Z])/g, '$1 $2')
+                         .replace(/[_\-./]/g, ' ')
+                         .toLowerCase().split(/\s+/);
+    for (var s = 0; s < segments.length; s++) {
+      if (segments[s] && segments[s] !== nameLower) {
+        _searchTrie.insert(segments[s], entry);
+      }
+    }
+
+    // Index by qualified name segments
+    if (n.qualified_name) {
+      var qParts = n.qualified_name.replace(/::/g, '.').split('.');
+      for (var q = 0; q < qParts.length; q++) {
+        var part = qParts[q].toLowerCase();
+        if (part && part !== nameLower) {
+          _searchTrie.insert(part, entry);
+        }
+      }
+    }
+  });
+}
+
+function _highlightMatch(text, query) {
+  if (!query) return _escHtml(text);
+  var idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return _escHtml(text);
+  return _escHtml(text.substring(0, idx)) +
+    '<mark>' + _escHtml(text.substring(idx, idx + query.length)) + '</mark>' +
+    _escHtml(text.substring(idx + query.length));
+}
+
+function _renderSearchResults(query) {
+  var container = document.getElementById('search-results');
+  if (!container) return;
+
+  if (!query || query.length === 0) {
+    container.classList.remove('open');
+    _searchActiveIndex = -1;
+    return;
+  }
+
+  if (!_searchTrie) {
+    container.innerHTML = '<div class="search-empty">Index not ready</div>';
+    container.classList.add('open');
+    return;
+  }
+
+  var results = _searchTrie.search(query.toLowerCase(), 20);
+
+  if (results.length === 0) {
+    container.innerHTML = '<div class="search-empty">No results</div>';
+    container.classList.add('open');
+    _searchActiveIndex = -1;
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i];
+    var icon = _KIND_ICONS[r.kind] || '●';
+    var filePart = r.file_path ? r.file_path.split('/').pop() : '';
+    html += '<div class="search-result" data-index="' + i + '">' +
+      '<span class="search-result-icon">' + icon + '</span>' +
+      '<span class="search-result-name">' + _highlightMatch(r.name, query) + '</span>' +
+      '<span class="search-result-kind">' + r.kind + '</span>' +
+      (filePart ? '<span class="search-result-file">' + _escHtml(filePart) + '</span>' : '') +
+      '</div>';
+  }
+  container.innerHTML = html;
+  container.classList.add('open');
+  _searchActiveIndex = -1;
+
+  // Store results for keyboard nav
+  container._results = results;
+
+  // Click handlers
+  container.querySelectorAll('.search-result').forEach(function(el) {
+    el.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      var idx = parseInt(el.dataset.index, 10);
+      _selectSearchResult(container._results[idx]);
+    });
+  });
+}
+
+function _setActiveSearchResult(index) {
+  var container = document.getElementById('search-results');
+  if (!container) return;
+  var items = container.querySelectorAll('.search-result');
+  items.forEach(function(el) { el.classList.remove('active'); });
+  _searchActiveIndex = index;
+  if (index >= 0 && index < items.length) {
+    items[index].classList.add('active');
+    items[index].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function _selectSearchResult(entry) {
+  if (!entry) return;
+
+  // Close search
+  var input = document.getElementById('search-input');
+  var container = document.getElementById('search-results');
+  if (input) input.value = '';
+  if (container) container.classList.remove('open');
+  if (input) input.blur();
+
+  // Find the node in the current graph data; if not present, check if it's in fullGraphData
+  var node = null;
+  if (graphData && graphData.nodes) {
+    node = graphData.nodes.find(function(n) { return n.id === entry.id; });
+  }
+
+  if (node && node.x != null && node.y != null) {
+    // Node is in the current view — navigate to it
+    centerDetailOnGraphPoint(node.x, node.y, true);
+    highlightConnected(node);
+    _inspectorPinned = true;
+    populatePanel(node);
+  } else {
+    // Node is not in current view — show its info in the inspector
+    _inspectorPinned = true;
+    populatePanel(entry);
+  }
+}
+
+// Wire up search input
+(function() {
+  var input = document.getElementById('search-input');
+  var container = document.getElementById('search-results');
+  if (!input || !container) return;
+
+  var debounceTimer = null;
+
+  input.addEventListener('input', function() {
+    clearTimeout(debounceTimer);
+    var q = input.value.trim();
+    debounceTimer = setTimeout(function() { _renderSearchResults(q); }, 60);
+  });
+
+  input.addEventListener('keydown', function(e) {
+    var items = container.querySelectorAll('.search-result');
+    var count = items.length;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _setActiveSearchResult(Math.min(_searchActiveIndex + 1, count - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _setActiveSearchResult(Math.max(_searchActiveIndex - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (_searchActiveIndex >= 0 && container._results) {
+        _selectSearchResult(container._results[_searchActiveIndex]);
+      } else if (container._results && container._results.length > 0) {
+        _selectSearchResult(container._results[0]);
+      }
+    } else if (e.key === 'Escape') {
+      input.value = '';
+      container.classList.remove('open');
+      input.blur();
+    }
+  });
+
+  input.addEventListener('focus', function() {
+    var q = input.value.trim();
+    if (q.length > 0) _renderSearchResults(q);
+  });
+
+  input.addEventListener('blur', function() {
+    // Delay to allow click on result
+    setTimeout(function() { container.classList.remove('open'); }, 150);
+  });
+
+  // Global "/" shortcut to focus search
+  document.addEventListener('keydown', function(e) {
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      var tag = (document.activeElement || {}).tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+        e.preventDefault();
+        input.focus();
+        input.select();
+      }
+    }
+  });
+})();
+
 // ================================================================
 // APPLICATION CODE
 // ================================================================
@@ -1060,6 +1666,7 @@ async function loadGraph() {
 
     document.querySelectorAll('[data-loading]').forEach(function(el) { el.style.display = 'none'; });
     updateLegend(rootGraphData);
+    buildSearchIndex();
     _setGraphView(rootGraphData, "Overview");
   } catch (err) {
     document.querySelectorAll('[data-loading]').forEach(function(el) { el.textContent = 'Error: ' + err.message; });
@@ -1209,6 +1816,8 @@ const _GROUP_KINDS = new Set(["test_group", "model_group", "config_group", "hand
 function drillIntoNode(d) {
   _inspectorPinned = false;
   if (d.kind === "class") {
+    // Don't drill into classes with no methods — nothing to show
+    if (!d.methods || d.methods.length === 0) { selectNode(d); return; }
     const sub = buildClassMethodGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
     updateBackButton();
@@ -2057,7 +2666,12 @@ var _inspectorPinned = false;   // when true, hover won't overwrite the inspecto
 var _DRILLABLE_KINDS = new Set(["class", "metaclass", "test_group", "model_group",
   "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 
-function _canDrill(d) { return _DRILLABLE_KINDS.has(d.kind); }
+function _canDrill(d) {
+  if (!_DRILLABLE_KINDS.has(d.kind)) return false;
+  // Classes without methods have nothing to drill into
+  if (d.kind === "class" && (!d.methods || d.methods.length === 0)) return false;
+  return true;
+}
 
 function _hasSourceFile(d) {
   // Metaclass / group nodes set file_path to a directory (no extension) and line_start=0.
