@@ -768,6 +768,9 @@
   <div class="ctx-item" id="ctx-get-info"><span class="ctx-icon">📋</span>Get Info</div>
   <div class="ctx-item" id="ctx-view-code"><span class="ctx-icon">📝</span>View Code</div>
   <div class="ctx-item" id="ctx-reveal-file"><span class="ctx-icon">📁</span>Reveal in Files</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-summary"><span class="ctx-icon">🤖</span>Summary</div>
+  <div class="ctx-item" id="ctx-query"><span class="ctx-icon">💬</span>Query</div>
 </div>
 
 
@@ -1427,8 +1430,15 @@ async function _chatSendMessage() {
   var text = input.value.trim();
   if (!text || _chatStreaming) return;
 
-  // Add user message
-  _chatMessages.push({role: 'user', content: text});
+  // If there's pending node context from a Query action, append it to the API message
+  var apiText = text;
+  if (_chatQueryNodeContext) {
+    apiText = text + '\n\nNode context:\n' + _chatQueryNodeContext;
+    _chatQueryNodeContext = null;
+  }
+
+  // Show user's typed text in the UI, but send the enriched version to the API
+  _chatMessages.push({role: 'user', content: apiText});
   _chatRenderMessage({role: 'user', content: text}, messagesEl);
   input.value = '';
   input.style.height = 'auto';
@@ -1633,6 +1643,206 @@ PanelRegistry.register({
     _chatRenderPanel(content);
   },
 });
+
+// ── Programmatic chat helpers (used by context menu Summary / Query) ──
+
+/**
+ * Ensure the AI Chat panel is open and its tab is active.
+ */
+function _ensureChatPanelOpen() {
+  if (!WindowManager.layout.hasPanelInTree('llm-chat') &&
+      !WindowManager.floating.floatingPanels.has('llm-chat')) {
+    WindowManager.openPanel('llm-chat');
+  }
+  if (WindowManager.layout.activateTab('llm-chat')) {
+    WindowManager.rebuildLayout();
+    WindowManager._saveState();
+  }
+}
+
+/**
+ * Build a concise context string describing a graph node for the LLM.
+ */
+function _buildNodeContext(d) {
+  var parts = [];
+  parts.push('Node: ' + d.name);
+  parts.push('Kind: ' + d.kind);
+  if (d.qualified_name) parts.push('Qualified name: ' + d.qualified_name);
+  if (d.file_path) parts.push('File: ' + d.file_path);
+  if (d.line_start && d.line_end) parts.push('Lines: ' + d.line_start + '–' + d.line_end);
+  if (d.bases && d.bases.length > 0) parts.push('Inherits from: ' + d.bases.join(', '));
+  if (d.docstring) parts.push('Docstring: ' + d.docstring);
+  if (d.methods && d.methods.length > 0) parts.push('Methods (' + d.methods.length + '): ' + d.methods.slice(0, 15).join(', ') + (d.methods.length > 15 ? '…' : ''));
+  if (d.members && d.members.length > 0) parts.push('Grouped classes (' + d.members.length + '): ' + d.members.slice(0, 15).join(', ') + (d.members.length > 15 ? '…' : ''));
+
+  // Add relationship info from current graph
+  if (graphData && graphData.edges) {
+    var incoming = graphData.edges.filter(function(e) { return _nid(e.target) === d.id; });
+    var outgoing = graphData.edges.filter(function(e) { return _nid(e.source) === d.id; });
+    var findName = function(id) { var rid = typeof id === 'object' ? id.id : id; var n = graphData.nodes.find(function(n) { return n.id === rid; }); return n ? n.name : rid; };
+    if (outgoing.length > 0) {
+      parts.push('Outgoing edges: ' + outgoing.slice(0, 10).map(function(e) { return e.kind + ' → ' + findName(e.target); }).join(', ') + (outgoing.length > 10 ? '…' : ''));
+    }
+    if (incoming.length > 0) {
+      parts.push('Incoming edges: ' + incoming.slice(0, 10).map(function(e) { return findName(e.source) + ' ' + e.kind + ' →'; }).join(', ') + (incoming.length > 10 ? '…' : ''));
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Send a message to the AI Chat programmatically (not from the input field).
+ * Opens the chat panel, renders the user message, and streams the response.
+ */
+async function _chatSendProgrammatic(text) {
+  _ensureChatPanelOpen();
+
+  // Small delay to let the panel DOM render if it was just opened
+  await new Promise(function(r) { setTimeout(r, 80); });
+
+  var panel = document.getElementById('chat-panel');
+  if (!panel) return;
+  var messagesEl = panel.querySelector('.chat-messages');
+  var sendBtn = panel.querySelector('.chat-send-btn');
+  var input = panel.querySelector('.chat-input');
+  if (!messagesEl) return;
+
+  if (_chatStreaming) return; // don't interrupt an active stream
+
+  // Add user message
+  _chatMessages.push({role: 'user', content: text});
+  _chatRenderMessage({role: 'user', content: text}, messagesEl);
+  if (input) { input.value = ''; input.style.height = 'auto'; }
+
+  _chatStreaming = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  var typingDiv = document.createElement('div');
+  typingDiv.className = 'chat-typing';
+  typingDiv.textContent = 'Thinking…';
+  messagesEl.appendChild(typingDiv);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  var assistantContent = '';
+  var assistantDiv = null;
+
+  try {
+    var apiBase = window.location.origin;
+    var resp = await fetch(apiBase + '/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ messages: _chatMessages, model: _chatModel }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, {stream: true});
+      var lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (var li = 0; li < lines.length; li++) {
+        var line = lines[li].trim();
+        if (!line) continue;
+        try { var evt = JSON.parse(line); } catch (_) { continue; }
+
+        if (evt.type === 'delta') {
+          if (typingDiv.parentNode) typingDiv.remove();
+          if (!assistantDiv) {
+            assistantDiv = document.createElement('div');
+            assistantDiv.className = 'chat-msg assistant';
+            messagesEl.appendChild(assistantDiv);
+          }
+          assistantContent += evt.content;
+          assistantDiv.innerHTML = _chatMarkdown(assistantContent);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (evt.type === 'tool_call') {
+          if (typingDiv.parentNode) typingDiv.remove();
+          _chatRenderToolCall(evt.name, evt.args, messagesEl);
+        } else if (evt.type === 'tool_result') {
+          _chatHandleToolAction(evt.content);
+          if (assistantDiv && assistantContent) {
+            _chatMessages.push({role: 'assistant', content: assistantContent});
+            assistantDiv = null;
+            assistantContent = '';
+          }
+        } else if (evt.type === 'error') {
+          if (typingDiv.parentNode) typingDiv.remove();
+          _chatRenderMessage({role: 'error', content: evt.content}, messagesEl);
+        } else if (evt.type === 'done') {
+          if (assistantContent) {
+            _chatMessages.push({role: 'assistant', content: assistantContent});
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (typingDiv.parentNode) typingDiv.remove();
+    _chatRenderMessage({role: 'error', content: 'Error: ' + err.message}, messagesEl);
+  }
+
+  _chatStreaming = false;
+  if (sendBtn) sendBtn.disabled = false;
+  if (typingDiv.parentNode) typingDiv.remove();
+}
+
+/**
+ * Request an AI summary of a node via the chat panel.
+ */
+function chatSummarizeNode(d) {
+  var ctx = _buildNodeContext(d);
+  var prompt = 'Give me a concise summary of this node. Explain what it contains, what it does, and how it fits into the broader architecture of the application.\n\n' + ctx;
+  _chatSendProgrammatic(prompt);
+}
+
+/**
+ * Open the chat panel with context about a node and focus the input
+ * so the user can type a specific question.
+ */
+function chatQueryNode(d) {
+  _ensureChatPanelOpen();
+
+  // Small delay for panel DOM
+  setTimeout(function() {
+    var panel = document.getElementById('chat-panel');
+    if (!panel) return;
+    var input = panel.querySelector('.chat-input');
+    var messagesEl = panel.querySelector('.chat-messages');
+
+    // Show a system-style message with the node context
+    if (messagesEl) {
+      var ctx = _buildNodeContext(d);
+      _chatRenderMessage({
+        role: 'system',
+        content: '◆ Context loaded: ' + d.name + ' (' + d.kind + ')'
+      }, messagesEl);
+    }
+
+    // Pre-fill the input with the context prefix so the LLM gets it
+    if (input) {
+      var prefix = 'Regarding ' + d.kind + ' `' + d.name + '`';
+      if (d.file_path) prefix += ' in ' + d.file_path;
+      prefix += ': ';
+      input.value = prefix;
+      input.focus();
+      // Place cursor at end
+      input.setSelectionRange(prefix.length, prefix.length);
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    }
+
+    // Stash the node context so it gets included when the user sends
+    _chatQueryNodeContext = _buildNodeContext(d);
+  }, 100);
+}
+
+// Holds pending node context for the next query send
+var _chatQueryNodeContext = null;
 
 // ================================================================
 // TRIE-BASED PREDICTIVE SEARCH
@@ -3392,6 +3602,8 @@ function hideNodeContextMenu() {
   var infoBtn = document.getElementById("ctx-get-info");
   var codeBtn = document.getElementById("ctx-view-code");
   var revealBtn = document.getElementById("ctx-reveal-file");
+  var summaryBtn = document.getElementById("ctx-summary");
+  var queryBtn = document.getElementById("ctx-query");
 
   digBtn.addEventListener("click", function(e) {
     e.stopPropagation();
@@ -3423,6 +3635,22 @@ function hideNodeContextMenu() {
     e.stopPropagation();
     if (_ctxMenuNode && _ctxMenuNode.file_path) {
       revealInFileTree(_ctxMenuNode.file_path);
+    }
+    hideNodeContextMenu();
+  });
+
+  summaryBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode) {
+      chatSummarizeNode(_ctxMenuNode);
+    }
+    hideNodeContextMenu();
+  });
+
+  queryBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode) {
+      chatQueryNode(_ctxMenuNode);
     }
     hideNodeContextMenu();
   });

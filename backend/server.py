@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-load_dotenv()  # load .env from project root (for OPENAI_API_KEY etc.)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # project root .env
 
 from fastapi import FastAPI, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
