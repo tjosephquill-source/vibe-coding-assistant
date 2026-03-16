@@ -6,16 +6,20 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()  # load .env from project root (for OPENAI_API_KEY etc.)
+
 from fastapi import FastAPI, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from backend.analyzer import (
     analyze_codebase, abstract_graph,
     _load_from_cache, _save_to_cache, _ensure_cache_dir,
 )
 from backend.insights import detect_insights
+from backend.llm_chat import stream_chat
 
 app = FastAPI(title="VibeCodingAssistant", version="0.1.0")
 
@@ -309,6 +313,49 @@ async def save_layout(request: Request):
     except OSError:
         return JSONResponse({"error": "Failed to write cache"}, status_code=500)
     return {"status": "ok"}
+
+
+# ── LLM Chat endpoint ───────────────────────────────────────────────
+
+@app.get("/api/chat/models")
+def get_chat_models():
+    """Return available LLM models for the chat panel."""
+    return {
+        "models": [
+            {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "default": True},
+            {"id": "gpt-4o", "name": "GPT-4o"},
+            {"id": "gpt-4.1-mini", "name": "GPT-4.1 Mini"},
+            {"id": "gpt-4.1", "name": "GPT-4.1"},
+        ]
+    }
+
+
+@app.post("/api/chat")
+async def chat_endpoint(request: Request):
+    """Stream an LLM chat response with tool-use. Body: {messages, model?}."""
+    body = await request.json()
+    messages = body.get("messages", [])
+    model = body.get("model", "gpt-4o-mini")
+
+    if not messages:
+        return JSONResponse({"error": "No messages provided."}, status_code=400)
+
+    # Get the full graph for graph-summary tool
+    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
+    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
+    abs_path = os.path.abspath(target_path)
+    graph_dict = None
+    if os.path.isdir(abs_path):
+        try:
+            graph_dict = _get_or_analyze(abs_path, abstract=False)
+        except Exception:
+            pass
+
+    return StreamingResponse(
+        stream_chat(messages, model=model, graph_dict=graph_dict),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # Serve the frontend

@@ -37,10 +37,10 @@ const WM_DEFAULT_LAYOUT = {
         {
           type: 'split',
           direction: 'vertical',
-          ratio: 0.75,
+          ratio: 0.5,
           children: [
-            { type: 'panel', panelId: 'node-inspector' },
-            { type: 'panel', panelId: 'legend' },
+            { type: 'tabs', panels: ['node-inspector', 'insights'], activeIndex: 0 },
+            { type: 'tabs', panels: ['llm-chat', 'legend'], activeIndex: 0 },
           ],
         },
       ],
