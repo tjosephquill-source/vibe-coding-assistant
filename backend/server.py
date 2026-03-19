@@ -20,6 +20,11 @@ from backend.analyzer import (
 )
 from backend.insights import detect_insights
 from backend.llm_chat import stream_chat
+from backend.projects import (
+    list_projects, create_project, delete_project,
+    get_current_project, get_current_project_id,
+    set_current_project,
+)
 
 app = FastAPI(title="VibeCodingAssistant", version="0.1.0")
 
@@ -64,10 +69,129 @@ def _get_or_analyze(repo_path: str, abstract: bool) -> dict:
     return payload
 
 
+# ── Active project helper ───────────────────────────────────────────
+
+def _active_codebase_path() -> Optional[str]:
+    """Return the absolute path of the currently active project's codebase.
+
+    Falls back to the legacy mock_codebase2 / mock_codebase directory
+    when no project has been selected yet.
+    """
+    proj = get_current_project()
+    if proj:
+        p = proj["path"]
+        if os.path.isdir(p):
+            return os.path.abspath(p)
+
+    # Legacy fallback
+    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
+    if os.path.isdir(mock_path):
+        return os.path.abspath(mock_path)
+    fallback = os.path.abspath("mock_codebase")
+    if os.path.isdir(fallback):
+        return fallback
+    return None
+
+
+# ── Project management endpoints ────────────────────────────────────
+
+@app.get("/api/projects")
+def api_list_projects():
+    """Return all registered projects and the currently active ID."""
+    projects = list_projects()
+    return {
+        "projects": projects,
+        "current_id": get_current_project_id(),
+    }
+
+
+@app.post("/api/projects")
+async def api_create_project(request: Request):
+    """Create a new project from a filesystem path.  Body: {name, path}."""
+    body = await request.json()
+    name = body.get("name", "").strip()
+    path = body.get("path", "").strip()
+    if not path:
+        return JSONResponse({"error": "Path is required."}, status_code=400)
+    try:
+        proj = create_project(name or os.path.basename(path), path)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # Clear in-memory graph caches so the new project gets analysed fresh
+    _graph_cache.clear()
+    return proj
+
+
+@app.post("/api/projects/select")
+async def api_select_project(request: Request):
+    """Switch the active project.  Body: {project_id}."""
+    body = await request.json()
+    pid = body.get("project_id", "")
+    if not pid:
+        return JSONResponse({"error": "project_id is required."}, status_code=400)
+    if not set_current_project(pid):
+        return JSONResponse({"error": "Project not found."}, status_code=404)
+    # Clear in-memory caches so endpoints serve the new project
+    _graph_cache.clear()
+    return {"status": "ok", "current_id": pid}
+
+
+@app.delete("/api/projects/{project_id}")
+def api_delete_project(project_id: str):
+    """Delete a project from the registry."""
+    if not delete_project(project_id):
+        return JSONResponse({"error": "Project not found."}, status_code=404)
+    _graph_cache.clear()
+    return {"status": "ok"}
+
+
 @app.get("/.well-known/appspecific/com.chrome.devtools.json")
 def chrome_devtools_probe():
     """Silence Chrome DevTools probe 404s."""
     return Response(status_code=204)
+
+
+# ── Filesystem browser endpoint ─────────────────────────────────────
+
+_BROWSE_IGNORE = {
+    "__pycache__", "node_modules", ".git", ".svn", ".hg",
+    ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+    ".eggs", ".next", ".nuxt", "coverage", ".nyc_output",
+    "bower_components", ".venv", "venv", "env",
+}
+
+
+@app.get("/api/browse")
+def browse_dirs(path: str = Query(default="")):
+    """List directories at *path* for the folder-picker UI.
+
+    Returns ``{current, parent, dirs: [{name, path}]}``.
+    When *path* is empty the user's home directory is used as the
+    starting point.
+    """
+    if not path:
+        path = str(Path.home())
+    path = os.path.abspath(os.path.expanduser(path))
+
+    if not os.path.isdir(path):
+        return JSONResponse({"error": f"Not a directory: {path}"}, status_code=400)
+
+    parent = os.path.dirname(path) if path != os.path.dirname(path) else None
+
+    dirs: list[dict] = []
+    try:
+        for entry in sorted(os.listdir(path), key=str.lower):
+            if entry.startswith(".") and entry not in (".",):
+                continue
+            if entry in _BROWSE_IGNORE:
+                continue
+            full = os.path.join(path, entry)
+            if os.path.isdir(full):
+                dirs.append({"name": entry, "path": full})
+    except PermissionError:
+        return JSONResponse({"error": "Permission denied"}, status_code=403)
+
+    return {"current": path, "parent": parent, "dirs": dirs}
 
 
 @app.post("/api/analyze")
@@ -88,13 +212,10 @@ def analyze(
 def get_graph(
     abstract: bool = Query(default=False),
 ):
-    """Return a cached graph (or auto-analyze mock_codebase2)."""
-    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
-    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
-    abs_path = os.path.abspath(target_path)
-
-    if not os.path.isdir(abs_path):
-        return JSONResponse({"error": "No analysis run yet. POST /api/analyze first."}, status_code=404)
+    """Return the analysis graph for the active project."""
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected. Create or select a project first."}, status_code=404)
 
     payload = _get_or_analyze(abs_path, abstract)
     return payload
@@ -103,14 +224,10 @@ def get_graph(
 @app.get("/api/insights")
 def get_insights():
     """Run pattern detection rules against the full (non-abstract) graph."""
-    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
-    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
-    abs_path = os.path.abspath(target_path)
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected."}, status_code=404)
 
-    if not os.path.isdir(abs_path):
-        return JSONResponse({"error": "No analysis run yet."}, status_code=404)
-
-    # Run detection on the full (non-abstract) graph
     graph_dict = _get_or_analyze(abs_path, abstract=False)
     insights = detect_insights(graph_dict)
     return {"insights": insights, "count": len(insights)}
@@ -167,6 +284,7 @@ async def save_positions(request: Request):
 _CODE_EXTENSIONS = {
     ".py", ".pyx", ".pxd", ".pyi",
     ".js", ".ts", ".jsx", ".tsx",
+    ".html", ".htm",
     ".java", ".kt", ".scala",
     ".c", ".h", ".cpp", ".hpp",
     ".go", ".rs", ".rb", ".php",
@@ -174,9 +292,40 @@ _CODE_EXTENSIONS = {
 }
 
 _IGNORE_DIRS = {
-    "__pycache__", ".git", ".svn", ".hg", "node_modules",
+    "__pycache__", "node_modules", ".git", ".svn", ".hg",
     ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
-    ".eggs", "*.egg-info",
+    ".eggs", ".idea", ".vscode",
+    "venv", ".venv", "env", ".env",
+    ".next", ".nuxt", "coverage", ".nyc_output",
+    "bower_components", "vendor", ".cache", ".parcel-cache",
+    "target", "out", "bin", "obj",
+}
+
+# File extensions to exclude even if they exist in the tree
+_IGNORE_EXTENSIONS = {
+    ".env", ".md", ".txt", ".rst", ".log", ".lock",
+    ".yml", ".yaml", ".toml", ".cfg", ".ini", ".conf",
+    ".json", ".xml", ".csv", ".svg", ".png", ".jpg", ".jpeg",
+    ".gif", ".ico", ".woff", ".woff2", ".ttf", ".eot",
+    ".map", ".min.js", ".min.css", ".LICENSE",
+    ".pyc", ".pyo", ".class", ".o", ".so", ".dll", ".dylib",
+}
+
+# File names to always exclude
+_IGNORE_FILES = {
+    ".env", ".gitignore", ".gitattributes", ".editorconfig",
+    ".dockerignore", "Dockerfile", "docker-compose.yml",
+    "Makefile", "Procfile", "Vagrantfile",
+    "LICENSE", "LICENSE.md", "LICENSE.txt",
+    "README.md", "README.rst", "README.txt", "README",
+    "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md",
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "Pipfile.lock", "poetry.lock", "composer.lock", "Gemfile.lock",
+    "requirements.txt", "setup.py", "setup.cfg", "pyproject.toml",
+    "package.json", "tsconfig.json", "webpack.config.js",
+    ".babelrc", ".eslintrc", ".eslintrc.json", ".eslintrc.js",
+    ".prettierrc", ".prettierrc.json", ".prettierignore",
+    "jest.config.js", "jest.config.ts",
 }
 
 
@@ -198,7 +347,11 @@ def _build_file_tree(root: str, max_depth: int = 12) -> dict:
         if depth > max_depth:
             return None
         name = os.path.basename(dirpath)
-        if name in _IGNORE_DIRS:
+        # Skip ignored and hidden directories
+        if name in _IGNORE_DIRS or (name.startswith(".") and name != "."):
+            return None
+        # Also skip dirs whose name ends with common build suffixes
+        if name.endswith(".egg-info") or name.endswith(".dist-info"):
             return None
 
         children: list[dict] = []
@@ -223,13 +376,18 @@ def _build_file_tree(root: str, max_depth: int = 12) -> dict:
                 if subtree is not None:
                     children.append(subtree)
             else:
+                # Skip ignored file names
+                if entry in _IGNORE_FILES:
+                    continue
                 ext = os.path.splitext(entry)[1].lower()
-                if ext in _CODE_EXTENSIONS:
-                    children.append({
-                        "name": entry,
-                        "type": "file",
-                        "path": os.path.relpath(full, root),
-                    })
+                # Skip ignored extensions, only show code extensions
+                if ext in _IGNORE_EXTENSIONS or ext not in _CODE_EXTENSIONS:
+                    continue
+                children.append({
+                    "name": entry,
+                    "type": "file",
+                    "path": os.path.relpath(full, root),
+                })
 
         if not children:
             return None
@@ -249,13 +407,10 @@ def _build_file_tree(root: str, max_depth: int = 12) -> dict:
 
 @app.get("/api/files")
 def get_files():
-    """Return a directory tree of the analysed codebase."""
-    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
-    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
-    abs_path = os.path.abspath(target_path)
-
-    if not os.path.isdir(abs_path):
-        return JSONResponse({"error": "Codebase directory not found."}, status_code=404)
+    """Return a directory tree of the active project's codebase."""
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected."}, status_code=404)
 
     tree = _build_file_tree(abs_path)
     return tree
@@ -263,10 +418,10 @@ def get_files():
 
 @app.get("/api/source")
 def get_source(path: str = Query(..., description="Relative file path within the codebase")):
-    """Return the source code of a file within the analysed codebase."""
-    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
-    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
-    abs_root = os.path.abspath(target_path)
+    """Return the source code of a file within the active project."""
+    abs_root = _active_codebase_path()
+    if not abs_root:
+        return JSONResponse({"error": "No project selected."}, status_code=404)
 
     # Resolve and validate the requested path stays within the codebase root
     requested = os.path.normpath(os.path.join(abs_root, path))
@@ -341,11 +496,9 @@ async def chat_endpoint(request: Request):
         return JSONResponse({"error": "No messages provided."}, status_code=400)
 
     # Get the full graph for graph-summary tool
-    mock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mock_codebase2")
-    target_path = mock_path if os.path.isdir(mock_path) else "mock_codebase"
-    abs_path = os.path.abspath(target_path)
+    abs_path = _active_codebase_path()
     graph_dict = None
-    if os.path.isdir(abs_path):
+    if abs_path:
         try:
             graph_dict = _get_or_analyze(abs_path, abstract=False)
         except Exception:

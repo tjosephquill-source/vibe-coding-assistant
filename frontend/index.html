@@ -737,6 +737,115 @@
   }
   .chat-send-btn:hover { background:var(--accent-dim); color:var(--bg); }
   .chat-send-btn:disabled { opacity:.3; cursor:default; }
+
+  /* ── Project selector ─────────────────────────────────────── */
+  .project-group { display:flex; align-items:center; gap:6px; margin-right:4px; }
+  .project-group label {
+    font-size:10px; color:var(--text-muted); text-transform:uppercase;
+    letter-spacing:1px; font-weight:600; white-space:nowrap;
+  }
+  #project-select {
+    background:var(--surface); border:1px solid var(--border); color:var(--text);
+    font-family:'Rajdhani',sans-serif; font-size:12px; font-weight:600;
+    padding:2px 8px; max-width:180px; cursor:pointer;
+    clip-path:var(--clip-sm); transition:all .15s;
+  }
+  #project-select:hover { border-color:var(--accent-dim); }
+  #project-select:focus { outline:none; border-color:var(--accent); }
+
+  /* ── New-project modal ────────────────────────────────────── */
+  .modal-overlay {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.65);
+    z-index:20000; align-items:center; justify-content:center;
+  }
+  .modal-overlay.open { display:flex; }
+  .modal-box {
+    background:var(--surface); border:1px solid var(--border-hi);
+    padding:24px 28px; min-width:380px; max-width:480px;
+    clip-path:var(--clip); box-shadow:0 12px 40px rgba(0,0,0,.7);
+  }
+  .modal-title {
+    font-size:16px; font-weight:700; text-transform:uppercase;
+    letter-spacing:2px; color:var(--accent); margin-bottom:18px;
+  }
+  .modal-field { margin-bottom:14px; }
+  .modal-field label {
+    display:block; font-size:11px; text-transform:uppercase;
+    letter-spacing:1px; color:var(--text-muted); margin-bottom:4px; font-weight:600;
+  }
+  .modal-field input {
+    width:100%; background:var(--bg); border:1px solid var(--border);
+    color:var(--text); font-family:'Share Tech Mono',monospace;
+    font-size:13px; padding:6px 10px; transition:border-color .15s;
+  }
+  .modal-field input:focus { outline:none; border-color:var(--accent); }
+  .modal-error {
+    color:var(--red); font-size:11px; margin-bottom:10px; min-height:16px;
+    font-weight:600; letter-spacing:.5px;
+  }
+  .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+  .modal-btn {
+    background:var(--surface-alt); border:1px solid var(--border); color:var(--text-muted);
+    cursor:pointer; font-family:'Rajdhani',sans-serif; font-size:12px;
+    font-weight:700; text-transform:uppercase; letter-spacing:1px;
+    padding:5px 18px; clip-path:var(--clip-sm); transition:all .15s;
+  }
+  .modal-btn:hover { background:var(--olive); color:var(--text); }
+  .modal-btn.primary {
+    background:var(--olive); color:var(--accent); border-color:var(--accent-dim);
+  }
+  .modal-btn.primary:hover { background:var(--accent-dim); color:var(--bg); }
+
+  /* ── Folder browser (inside new-project modal) ────────────── */
+  .modal-path-row {
+    display:flex; gap:6px; align-items:stretch;
+  }
+  .modal-path-row input { flex:1; min-width:0; }
+  .modal-btn-browse {
+    background:var(--surface-alt); border:1px solid var(--border); color:var(--text-muted);
+    cursor:pointer; font-family:'Rajdhani',sans-serif; font-size:11px;
+    font-weight:700; text-transform:uppercase; letter-spacing:1px;
+    padding:0 12px; white-space:nowrap; clip-path:var(--clip-sm); transition:all .15s;
+  }
+  .modal-btn-browse:hover { background:var(--olive); color:var(--accent); border-color:var(--accent-dim); }
+  #np-browser {
+    display:none; margin-top:10px; background:var(--bg); border:1px solid var(--border);
+    max-height:260px; overflow-y:auto; padding:2px 0;
+  }
+  #np-browser.open { display:block; }
+  .browser-bar {
+    display:flex; align-items:center; gap:4px; padding:5px 8px;
+    border-bottom:1px solid var(--border); background:var(--surface);
+    font-size:11px; color:var(--text-muted); overflow:hidden;
+  }
+  .browser-bar-path {
+    flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-family:'Share Tech Mono',monospace; font-size:11px; color:var(--text);
+    direction:rtl; text-align:left;
+  }
+  .browser-up {
+    background:none; border:1px solid var(--border); color:var(--text-muted);
+    cursor:pointer; font-size:12px; padding:1px 6px; border-radius:2px;
+    font-family:'Rajdhani',sans-serif; font-weight:700; transition:all .15s;
+  }
+  .browser-up:hover { color:var(--accent); border-color:var(--accent-dim); }
+  .browser-up:disabled { opacity:.3; cursor:default; }
+  .browser-item {
+    display:flex; align-items:center; gap:6px; padding:4px 10px;
+    cursor:pointer; font-size:12px; color:var(--text);
+    font-family:'Share Tech Mono',monospace; transition:background .1s;
+  }
+  .browser-item:hover { background:var(--surface-alt); }
+  .browser-item .b-icon { font-size:13px; flex-shrink:0; }
+  .browser-item .b-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .browser-select-row {
+    display:flex; justify-content:flex-end; gap:8px; padding:6px 8px;
+    border-top:1px solid var(--border); background:var(--surface);
+  }
+  .browser-empty {
+    padding:14px; text-align:center; color:var(--text-muted); font-size:11px;
+    text-transform:uppercase; letter-spacing:1px;
+  }
 </style>
 </head>
 <body>
@@ -744,6 +853,10 @@
 <button id="back-btn">← Back</button>
 
 <div id="wm-toolbar">
+  <div class="project-group">
+    <label>Project</label>
+    <select id="project-select"><option value="">Loading…</option></select>
+  </div>
   <div class="search-container">
     <div class="search-input-wrap">
       <span class="search-icon">🔍</span>
@@ -757,6 +870,30 @@
     <div id="wm-view-menu"></div>
   </div>
   <button id="wm-reset-btn" title="Reset layout to default">⟲ Reset</button>
+</div>
+
+<!-- New-project modal -->
+<div id="new-project-modal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title">◆ New Project</div>
+    <div class="modal-field">
+      <label>Project Name</label>
+      <input id="np-name" type="text" placeholder="My App" spellcheck="false">
+    </div>
+    <div class="modal-field">
+      <label>Codebase Path</label>
+      <div class="modal-path-row">
+        <input id="np-path" type="text" placeholder="/Users/you/projects/my-app" spellcheck="false">
+        <button class="modal-btn-browse" id="np-browse-btn" type="button">Browse…</button>
+      </div>
+      <div id="np-browser"></div>
+    </div>
+    <div class="modal-error" id="np-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="np-cancel">Cancel</button>
+      <button class="modal-btn primary" id="np-create">Create</button>
+    </div>
+  </div>
 </div>
 
 <div id="wm-root"></div>
@@ -2921,7 +3058,7 @@ function snapNodesToGrid(nodeData, svg, g, node, link) {
     n.y = gridOriginY + cell.row * rowGap;
     n.fx = null; n.fy = null;
   });
-  node.attr("transform", d => `translate(${d.x},${d.y})`);
+  node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   link.attr("d", edgePath);
   // Fit immediately (no animation) then animate a refined fit
   const container = document.getElementById("graph-container");
@@ -3094,7 +3231,7 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   hitLayer.selectAll("g")
     .data(nodeData || [])
     .join("g")
-    .attr("transform", d => `translate(${d.x},${d.y})`)
+    .attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`)
     .append("rect")
     .attr("x", d => -(NODE_SIZE[d.kind]?.w || 160) / 2)
     .attr("y", d => -(NODE_SIZE[d.kind]?.h || 60) / 2)
@@ -3364,7 +3501,7 @@ function renderGraph() {
       if (typeof d.source === "string") d.source = nodeMap.get(d.source) || d.source;
       if (typeof d.target === "string") d.target = nodeMap.get(d.target) || d.target;
     });
-    node.attr("transform", d => `translate(${d.x},${d.y})`);
+    node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
     link.attr("d", edgePath);
     // Use current container dimensions, not the captured width/height
     const ctr = document.getElementById("graph-container");
@@ -3416,7 +3553,7 @@ function renderGraph() {
     if (!hasAnyEdges) {
       gridLayout(nodeData, width, height);
       window._nodes = node; window._links = link; window._nodeData = nodeData; window._linkData = linkData;
-      node.attr("transform", d => `translate(${d.x},${d.y})`);
+      node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
       link.attr("d", edgePath);
       const ctr = document.getElementById("graph-container");
       if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
@@ -3435,6 +3572,14 @@ function renderGraph() {
     // Separate edgeless nodes — they'll be grid-positioned after simulation
     const edgelessNodes = nodeData.filter(n => !connectedNodeIds.has(n.id));
     const simulatedNodes = nodeData.filter(n => connectedNodeIds.has(n.id));
+
+    // Give edgeless nodes temporary positions so the D3 tick handler
+    // never encounters undefined x/y (they are repositioned properly
+    // in _saveAndSnap after the simulation finishes).
+    edgelessNodes.forEach(n => {
+      if (n.x == null) n.x = -9999;
+      if (n.y == null) n.y = -9999;
+    });
     // Only edges referencing simulated nodes
     const simulatedLinks = linkData.filter(function(e) {
       const s = typeof e.source === "object" ? e.source.id : e.source;
@@ -3460,7 +3605,7 @@ function renderGraph() {
 
     simulation.on("tick", function() {
       link.attr("d", edgePath);
-      node.attr("transform", d => `translate(${d.x},${d.y})`);
+      node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
       if (autoFitActive) {
         const now = performance.now();
         if (now - lastAutoFitTs >= AUTO_FIT_INTERVAL_MS) {
@@ -3803,9 +3948,310 @@ function _handleResize() {
 window.addEventListener("resize", _handleResize);
 
 // ── Boot ───────────────────────────────────────────────────────────
+
+// ── Project management ─────────────────────────────────────────────
+
+var _projectsList = [];
+var _currentProjectId = null;
+
+function loadProjects(thenBoot) {
+  fetch(API_BASE + '/api/projects')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      _projectsList = data.projects || [];
+      _currentProjectId = data.current_id || null;
+      _populateProjectSelect();
+      if (thenBoot) _bootApp();
+    })
+    .catch(function () {
+      // Couldn't reach the server — boot anyway with fallback
+      if (thenBoot) _bootApp();
+    });
+}
+
+function _populateProjectSelect() {
+  var sel = document.getElementById('project-select');
+  sel.innerHTML = '';
+
+  if (_projectsList.length === 0) {
+    var opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '(no projects)';
+    sel.appendChild(opt);
+  } else {
+    _projectsList.forEach(function (p) {
+      var opt = document.createElement('option');
+      opt.value = p.project_id;
+      opt.textContent = p.name;
+      if (p.project_id === _currentProjectId) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  // Sentinel: add new project option
+  var addOpt = document.createElement('option');
+  addOpt.value = '__new__';
+  addOpt.textContent = '＋ New Project…';
+  sel.appendChild(addOpt);
+}
+
+document.getElementById('project-select').addEventListener('change', function () {
+  var val = this.value;
+  if (val === '__new__') {
+    _openNewProjectModal();
+    // Reset select to current project
+    this.value = _currentProjectId || '';
+    return;
+  }
+  if (!val || val === _currentProjectId) return;
+  _switchProject(val);
+});
+
+function _switchProject(projectId) {
+  fetch(API_BASE + '/api/projects/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function () {
+      _currentProjectId = projectId;
+      _reloadAllData();
+    });
+}
+
+function _reloadAllData() {
+  // Clear all caches
+  _dirTreeCache = null;
+  _dirTreeLoading = false;
+  _insightsData = null;
+  _insightsLoading = false;
+  _codeEditorCurrentPath = null;
+  rootGraphData = null;
+  fullGraphData = null;
+  graphData = null;
+  intermediateGraphData = { nodes: [], edges: [] };
+  graphStack = [];
+  _positionCache.clear();
+
+  // Reset graph visuals
+  var graphSvg = document.getElementById('graph-svg');
+  if (graphSvg) graphSvg.innerHTML = '';
+  var zoomSvg = document.getElementById('zoom-svg');
+  if (zoomSvg) zoomSvg.innerHTML = '';
+
+  // Show loading indicators
+  document.querySelectorAll('[data-loading]').forEach(function (el) {
+    el.style.display = '';
+    el.textContent = 'Analyzing codebase…';
+  });
+
+  // Reload everything
+  loadGraph();
+  loadDirectoryTree();
+  // Insights will reload when the panel is next opened (cached data cleared)
+}
+
+// ── New-project modal ──────────────────────────────────────────────
+
+function _openNewProjectModal() {
+  document.getElementById('np-name').value = '';
+  document.getElementById('np-path').value = '';
+  document.getElementById('np-error').textContent = '';
+  _closeBrowser();
+  document.getElementById('new-project-modal').classList.add('open');
+  setTimeout(function () { document.getElementById('np-path').focus(); }, 80);
+}
+
+function _closeNewProjectModal() {
+  _closeBrowser();
+  document.getElementById('new-project-modal').classList.remove('open');
+}
+
+document.getElementById('np-cancel').addEventListener('click', _closeNewProjectModal);
+
+document.getElementById('new-project-modal').addEventListener('click', function (e) {
+  if (e.target === this) _closeNewProjectModal();
+});
+
+// ── Folder browser ─────────────────────────────────────────────────
+
+var _browserCurrentPath = null;
+
+function _closeBrowser() {
+  var el = document.getElementById('np-browser');
+  el.classList.remove('open');
+  el.innerHTML = '';
+  _browserCurrentPath = null;
+}
+
+document.getElementById('np-browse-btn').addEventListener('click', function () {
+  var browser = document.getElementById('np-browser');
+  if (browser.classList.contains('open')) {
+    _closeBrowser();
+    return;
+  }
+  // Start from the value in the path input, or home dir
+  var startPath = document.getElementById('np-path').value.trim() || '';
+  _browseDir(startPath);
+});
+
+function _browseDir(dirPath) {
+  var browser = document.getElementById('np-browser');
+  browser.classList.add('open');
+  browser.innerHTML = '<div class="browser-empty">Loading…</div>';
+
+  fetch(API_BASE + '/api/browse?path=' + encodeURIComponent(dirPath))
+    .then(function (r) {
+      if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'Error'); });
+      return r.json();
+    })
+    .then(function (data) {
+      _browserCurrentPath = data.current;
+      _renderBrowser(browser, data);
+    })
+    .catch(function (err) {
+      browser.innerHTML = '<div class="browser-empty" style="color:var(--red)">' + err.message + '</div>';
+    });
+}
+
+function _renderBrowser(container, data) {
+  container.innerHTML = '';
+
+  // Navigation bar: current path + up button
+  var bar = document.createElement('div');
+  bar.className = 'browser-bar';
+
+  var upBtn = document.createElement('button');
+  upBtn.className = 'browser-up';
+  upBtn.textContent = '↑ Up';
+  upBtn.disabled = !data.parent;
+  upBtn.addEventListener('click', function () {
+    if (data.parent) _browseDir(data.parent);
+  });
+  bar.appendChild(upBtn);
+
+  var pathLabel = document.createElement('span');
+  pathLabel.className = 'browser-bar-path';
+  pathLabel.textContent = data.current;
+  pathLabel.title = data.current;
+  bar.appendChild(pathLabel);
+
+  container.appendChild(bar);
+
+  // Directory list
+  var list = document.createElement('div');
+  list.style.maxHeight = '180px';
+  list.style.overflowY = 'auto';
+
+  if (data.dirs.length === 0) {
+    list.innerHTML = '<div class="browser-empty">No subdirectories</div>';
+  } else {
+    data.dirs.forEach(function (d) {
+      var item = document.createElement('div');
+      item.className = 'browser-item';
+
+      var icon = document.createElement('span');
+      icon.className = 'b-icon';
+      icon.textContent = '📁';
+
+      var name = document.createElement('span');
+      name.className = 'b-name';
+      name.textContent = d.name;
+
+      item.appendChild(icon);
+      item.appendChild(name);
+
+      // Double-click navigates into the folder
+      item.addEventListener('dblclick', function () {
+        _browseDir(d.path);
+      });
+      // Single click navigates into the folder
+      item.addEventListener('click', function () {
+        _browseDir(d.path);
+      });
+
+      list.appendChild(item);
+    });
+  }
+
+  container.appendChild(list);
+
+  // Select bar: pick the current directory
+  var selectRow = document.createElement('div');
+  selectRow.className = 'browser-select-row';
+
+  var selBtn = document.createElement('button');
+  selBtn.className = 'modal-btn primary';
+  selBtn.style.fontSize = '11px';
+  selBtn.style.padding = '3px 14px';
+  selBtn.textContent = 'Select This Folder';
+  selBtn.addEventListener('click', function () {
+    document.getElementById('np-path').value = data.current;
+    // Auto-fill name if empty
+    var nameInput = document.getElementById('np-name');
+    if (!nameInput.value.trim()) {
+      var parts = data.current.replace(/\/+$/, '').split('/');
+      nameInput.value = parts[parts.length - 1] || '';
+    }
+    _closeBrowser();
+  });
+  selectRow.appendChild(selBtn);
+
+  container.appendChild(selectRow);
+}
+
+document.getElementById('np-create').addEventListener('click', function () {
+  var name = document.getElementById('np-name').value.trim();
+  var path = document.getElementById('np-path').value.trim();
+  var errEl = document.getElementById('np-error');
+  errEl.textContent = '';
+
+  if (!path) { errEl.textContent = 'Path is required.'; return; }
+
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  fetch(API_BASE + '/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name || undefined, path: path }),
+  })
+    .then(function (r) {
+      if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'Failed'); });
+      return r.json();
+    })
+    .then(function (proj) {
+      _closeNewProjectModal();
+      _currentProjectId = proj.project_id;
+      // Reload project list and data
+      loadProjects(false);
+      _reloadAllData();
+    })
+    .catch(function (err) {
+      errEl.textContent = err.message;
+    })
+    .finally(function () {
+      btn.disabled = false;
+      btn.textContent = 'Create';
+    });
+});
+
+// Allow Enter key in the path input to submit
+document.getElementById('np-path').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') document.getElementById('np-create').click();
+});
+
+// ── App boot ───────────────────────────────────────────────────────
+
+function _bootApp() {
+  loadGraph();
+  loadDirectoryTree();
+}
+
 WindowManager.init(document.getElementById("wm-root"));
-loadGraph();
-loadDirectoryTree();
+loadProjects(true);
 </script>
 
 </body>

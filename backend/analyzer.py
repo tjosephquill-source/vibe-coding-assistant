@@ -1,9 +1,11 @@
 """
-Static analysis engine — parses Python source files and extracts
-classes, functions, and their relationships into a graph structure.
+Static analysis engine — parses Python, JavaScript/TypeScript, and HTML
+source files and extracts classes, functions, and their relationships
+into a graph structure.
 """
 
 import ast
+import re
 import os
 import json
 import hashlib
@@ -12,6 +14,22 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Optional
 from collections import defaultdict
+
+
+# ── Supported file types ────────────────────────────────────────────
+
+_SOURCE_GLOBS = ("*.py", "*.js", "*.jsx", "*.ts", "*.tsx", "*.html", "*.htm")
+_JS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx"}
+_HTML_EXTENSIONS = {".html", ".htm"}
+_SKIP_DIRS = {
+    "__pycache__", "node_modules", ".git", "dist", "build",
+    ".next", ".nuxt", "coverage", ".nyc_output", "vendor",
+    "bower_components", ".tox", ".mypy_cache", ".pytest_cache",
+    "venv", ".venv", "env", ".env", ".idea", ".vscode",
+    ".eggs", "egg-info", ".bundle", ".cache", ".parcel-cache",
+    "target", "out", "bin", "obj", "lib", ".gradle", ".mvn",
+    ".terraform", ".serverless",
+}
 
 
 # ── Cache directory ─────────────────────────────────────────────────
@@ -25,16 +43,18 @@ def _ensure_cache_dir() -> Path:
 
 
 def _source_fingerprint(root_dir: str) -> str:
-    """Hash all .py file paths + contents under root_dir for cache invalidation."""
+    """Hash all source file paths + contents under root_dir for cache invalidation."""
     h = hashlib.sha256()
-    py_files = sorted(Path(root_dir).rglob("*.py"))
-    for py_file in py_files:
-        rel = os.path.relpath(str(py_file), root_dir)
-        if any(part.startswith(".") or part == "__pycache__" for part in Path(rel).parts):
+    src_files = sorted(set(
+        f for g in _SOURCE_GLOBS for f in Path(root_dir).rglob(g)
+    ))
+    for src_file in src_files:
+        rel = os.path.relpath(str(src_file), root_dir)
+        if any(part.startswith(".") or part in _SKIP_DIRS for part in Path(rel).parts):
             continue
         h.update(rel.encode())
         try:
-            h.update(py_file.read_bytes())
+            h.update(src_file.read_bytes())
         except OSError:
             pass
     return h.hexdigest()[:20]
@@ -322,6 +342,284 @@ class _RelationshipCollector(ast.NodeVisitor):
         return None
 
 
+# ── JavaScript / TypeScript / HTML regex-based analysis ─────────────
+
+def _strip_js_comments(source: str) -> str:
+    """Remove JS/TS comments while preserving line numbers."""
+    def _keep_newlines(m: re.Match) -> str:
+        return "\n" * m.group(0).count("\n")
+    source = re.sub(r"/\*.*?\*/", _keep_newlines, source, flags=re.DOTALL)
+    source = re.sub(r"//[^\n]*", "", source)
+    return source
+
+
+_JS_CLASS_PAT = re.compile(
+    r"(?:export\s+(?:default\s+)?)?class\s+(\w+)"
+    r"(?:\s*<[^{]*?>)?"                              # optional type params
+    r"(?:\s+extends\s+([\w.]+)(?:\s*<[^{]*?>)?)?"    # optional extends
+    r"(?:\s+implements\s+[^{]+)?"                     # optional implements
+    r"\s*\{",
+)
+
+_JS_METHOD_PAT = re.compile(
+    r"^\s+(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?"
+    r"(?!if\b|for\b|while\b|switch\b|catch\b|return\b|throw\b|new\b|else\b"
+    r"|var\b|let\b|const\b|import\b|export\b)"
+    r"(\w+)\s*\([^)]*\)[^{\n]*\{",
+    re.MULTILINE,
+)
+
+_JS_FUNCTION_PAT = re.compile(
+    r"(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)\s*\(",
+)
+
+_JS_NEW_PAT = re.compile(r"\bnew\s+(\w+)\s*(?:<[^>]*>)?\s*\(")
+
+_JS_REQUIRE_PAT = re.compile(
+    r"(?:const|let|var)\s+(?:\{([^}]+)\}|(\w+))\s*=\s*require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)",
+)
+
+_HTML_SCRIPT_PAT = re.compile(
+    r"<script([^>]*)>(.*?)</script>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _find_closing_brace_pos(source: str, open_pos: int) -> int:
+    """Return the position *after* the '}' matching the '{' at open_pos.
+
+    Handles nested braces and skips over string literals (single, double,
+    and template).  Falls back to end-of-string if unbalanced.
+    """
+    depth = 1
+    i = open_pos + 1
+    n = len(source)
+    in_sq = in_dq = in_tpl = False
+    while i < n and depth > 0:
+        ch = source[i]
+        prev = source[i - 1] if i > 0 else ""
+        if in_sq:
+            if ch == "'" and prev != "\\":
+                in_sq = False
+        elif in_dq:
+            if ch == '"' and prev != "\\":
+                in_dq = False
+        elif in_tpl:
+            if ch == "`" and prev != "\\":
+                in_tpl = False
+        else:
+            if ch == "'":
+                in_sq = True
+            elif ch == '"':
+                in_dq = True
+            elif ch == "`":
+                in_tpl = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+        i += 1
+    return i
+
+
+def _extract_html_scripts(html_source: str) -> list[tuple[str, int]]:
+    """Extract inline ``<script>`` contents from HTML.
+
+    Returns a list of ``(script_source, line_offset)`` tuples where
+    *line_offset* is the 0-based line number of the ``<script>`` tag so
+    that reported line numbers match the original HTML file.
+    """
+    results: list[tuple[str, int]] = []
+    for m in _HTML_SCRIPT_PAT.finditer(html_source):
+        attrs = m.group(1)
+        content = m.group(2).strip()
+        # Skip external scripts (<script src="...">)
+        if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
+            continue
+        # Skip non-JS types (e.g. type="application/json")
+        type_match = re.search(r'\btype\s*=\s*[\'"]([^\'"]+)[\'"]', attrs, re.IGNORECASE)
+        if type_match:
+            stype = type_match.group(1).lower()
+            if stype not in (
+                "text/javascript", "application/javascript", "module",
+                "text/ecmascript", "application/ecmascript",
+            ):
+                continue
+        if content:
+            line_offset = html_source[: m.start(2)].count("\n")
+            results.append((content, line_offset))
+    return results
+
+
+class _JSClassCollector:
+    """Regex-based first-pass collector for JS/TS files.
+
+    Produces the same ``classes`` / ``functions`` dicts as the Python
+    ``_ClassCollector`` so the downstream edge-creation logic works
+    unchanged.
+    """
+
+    def __init__(self, file_path: str, module_qname: str):
+        self.file_path = file_path
+        self.module_qname = module_qname
+        self.classes: dict[str, Node] = {}
+        self.functions: dict[str, Node] = {}
+        self._class_ranges: dict[str, tuple[int, int]] = {}
+
+    def collect(self, source: str, line_offset: int = 0) -> None:
+        cleaned = _strip_js_comments(source)
+
+        for match in _JS_CLASS_PAT.finditer(cleaned):
+            class_name = match.group(1)
+            base_name = match.group(2)
+            line_start = cleaned[: match.start()].count("\n") + 1 + line_offset
+
+            # Locate opening brace and find closing brace
+            open_brace = cleaned.find("{", match.start())
+            if open_brace == -1:
+                continue
+            close_pos = _find_closing_brace_pos(cleaned, open_brace)
+            line_end = cleaned[:close_pos].count("\n") + 1 + line_offset
+
+            class_body = cleaned[open_brace + 1 : close_pos - 1]
+
+            # Detect methods inside the class body
+            methods: list[str] = []
+            for mm in _JS_METHOD_PAT.finditer(class_body):
+                methods.append(mm.group(1))
+
+            nid = _make_id(self.file_path, class_name)
+            cls_node = Node(
+                id=nid,
+                kind=NodeKind.CLASS,
+                name=class_name,
+                qualified_name=f"{self.module_qname}.{class_name}",
+                file_path=self.file_path,
+                line_start=line_start,
+                line_end=line_end,
+                methods=methods,
+                bases=[base_name] if base_name else [],
+            )
+            self.classes[class_name] = cls_node
+            self._class_ranges[class_name] = (line_start, line_end)
+
+            # Create method nodes
+            for mm in _JS_METHOD_PAT.finditer(class_body):
+                method_name = mm.group(1)
+                method_line = line_start + class_body[: mm.start()].count("\n") + 1
+                fn_qname = f"{self.module_qname}.{class_name}.{method_name}"
+                fn_id = _make_id(self.file_path, f"{class_name}.{method_name}")
+                fn_node = Node(
+                    id=fn_id,
+                    kind=NodeKind.METHOD,
+                    name=method_name,
+                    qualified_name=fn_qname,
+                    file_path=self.file_path,
+                    line_start=method_line,
+                    line_end=method_line,
+                )
+                self.functions[fn_qname] = fn_node
+
+
+class _JSRelationshipCollector:
+    """Regex-based second-pass collector for JS/TS relationships.
+
+    Exposes the same attribute interface (``imports``, ``import_sources``,
+    ``calls``, ``type_refs``, ``class_refs``) as ``_RelationshipCollector``
+    so the shared edge-creation helper works for both languages.
+    """
+
+    def __init__(self, file_path: str, module_qname: str, known_classes: set[str]):
+        self.file_path = file_path
+        self.module_qname = module_qname
+        self.known_classes = known_classes
+        self.imports: dict[str, str] = {}
+        self.import_sources: dict[str, str] = {}
+        self.calls: list[tuple[str, str, int]] = []
+        self.type_refs: list[tuple[str, str]] = []
+        self.class_refs: list[tuple[str, str]] = []
+
+    def collect(
+        self,
+        source: str,
+        class_ranges: dict[str, tuple[int, int]] | None = None,
+    ) -> None:
+        cleaned = _strip_js_comments(source)
+        class_ranges = class_ranges or {}
+
+        self._collect_imports(cleaned)
+        self._collect_refs(cleaned, class_ranges)
+
+    # ── imports ──────────────────────────────────────────────────────
+
+    def _collect_imports(self, cleaned: str) -> None:
+        # import { Foo, Bar } from 'module'   /   import type { … } from '…'
+        for m in re.finditer(
+            r"(?:import|export)\s+(?:type\s+)?\{([^}]+)\}\s+from\s+['\"]([^'\"]+)['\"]",
+            cleaned,
+        ):
+            names_str, module = m.group(1), m.group(2)
+            for raw in names_str.split(","):
+                name = raw.strip().split(" as ")[-1].strip()
+                original = raw.strip().split(" as ")[0].strip()
+                if name:
+                    self.imports[name] = f"{module}.{original}"
+                    self.import_sources[name] = module
+
+        # import Foo from 'module'
+        for m in re.finditer(
+            r"import\s+(\w+)\s+from\s+['\"]([^'\"]+)['\"]", cleaned
+        ):
+            name, module = m.group(1), m.group(2)
+            if name not in ("type",):
+                self.imports[name] = f"{module}.{name}"
+                self.import_sources[name] = module
+
+        # const Foo = require('module')
+        for m in _JS_REQUIRE_PAT.finditer(cleaned):
+            named, default, module = m.group(1), m.group(2), m.group(3)
+            if default:
+                self.imports[default] = f"{module}.{default}"
+                self.import_sources[default] = module
+            if named:
+                for n in named.split(","):
+                    n = n.strip()
+                    if n:
+                        self.imports[n] = f"{module}.{n}"
+                        self.import_sources[n] = module
+
+    # ── instantiations & class references ────────────────────────────
+
+    def _collect_refs(
+        self,
+        cleaned: str,
+        class_ranges: dict[str, tuple[int, int]],
+    ) -> None:
+        lines = cleaned.split("\n")
+        for line_num, line in enumerate(lines, 1):
+            context = self._line_context(line_num, class_ranges)
+
+            # new ClassName(…)
+            for m in _JS_NEW_PAT.finditer(line):
+                self.calls.append((context, m.group(1), line_num))
+
+            # Bare references to known class names
+            for cls_name in self.known_classes:
+                if cls_name in line and re.search(
+                    r"\b" + re.escape(cls_name) + r"\b", line
+                ):
+                    self.class_refs.append((context, cls_name))
+
+    @staticmethod
+    def _line_context(
+        line_num: int, class_ranges: dict[str, tuple[int, int]]
+    ) -> str:
+        for cls_name, (start, end) in class_ranges.items():
+            if start <= line_num <= end:
+                return cls_name
+        return "__module__"
+
+
 # ── Analysis engine ─────────────────────────────────────────────────
 
 def _module_qname(file_path: str, root: str) -> str:
@@ -334,7 +632,7 @@ def _module_qname(file_path: str, root: str) -> str:
 
 def analyze_codebase(root_dir: str) -> Graph:
     """
-    Walk a Python codebase directory, parse every .py file,
+    Walk a codebase directory, parse every .py / .js / .ts / .html file,
     and return a Graph of classes/methods and their relationships.
     """
     root_dir = os.path.abspath(root_dir)
@@ -343,14 +641,16 @@ def analyze_codebase(root_dir: str) -> Graph:
     all_classes: dict[str, Node] = {}
     all_functions: dict[str, Node] = {}
     file_collectors: list[tuple[str, str, _ClassCollector]] = []
+    js_file_collectors: list[tuple[str, str, _JSClassCollector]] = []
 
+    # ── Pass 1a: Python files ───────────────────────────────────────
     py_files = sorted(Path(root_dir).rglob("*.py"))
 
     for py_file in py_files:
         file_path = str(py_file)
         rel_path = os.path.relpath(file_path, root_dir)
 
-        if any(part.startswith(".") or part == "__pycache__" for part in Path(rel_path).parts):
+        if any(part.startswith(".") or part in _SKIP_DIRS for part in Path(rel_path).parts):
             continue
 
         source = py_file.read_text(encoding="utf-8")
@@ -383,6 +683,70 @@ def analyze_codebase(root_dir: str) -> Graph:
                     label="has method",
                 ))
 
+    # ── Pass 1b: JavaScript / TypeScript files ──────────────────────
+    js_files = sorted(set(
+        f for g in ("*.js", "*.jsx", "*.ts", "*.tsx")
+        for f in Path(root_dir).rglob(g)
+    ))
+
+    for js_file in js_files:
+        file_path = str(js_file)
+        rel_path = os.path.relpath(file_path, root_dir)
+
+        if any(part.startswith(".") or part in _SKIP_DIRS
+               for part in Path(rel_path).parts):
+            continue
+
+        try:
+            source = js_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        mod_qname = _module_qname(file_path, root_dir)
+        collector = _JSClassCollector(rel_path, mod_qname)
+        collector.collect(source)
+
+        if not collector.classes and not collector.functions:
+            continue
+
+        js_file_collectors.append((file_path, rel_path, collector))
+        _register_collected(graph, collector, all_classes, all_functions)
+
+    # ── Pass 1c: HTML files (inline scripts) ────────────────────────
+    html_files = sorted(set(
+        f for g in ("*.html", "*.htm")
+        for f in Path(root_dir).rglob(g)
+    ))
+
+    for html_file in html_files:
+        file_path = str(html_file)
+        rel_path = os.path.relpath(file_path, root_dir)
+
+        if any(part.startswith(".") or part in _SKIP_DIRS
+               for part in Path(rel_path).parts):
+            continue
+
+        try:
+            source = html_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        scripts = _extract_html_scripts(source)
+        if not scripts:
+            continue
+
+        mod_qname = _module_qname(file_path, root_dir)
+        collector = _JSClassCollector(rel_path, mod_qname)
+        for script_src, offset in scripts:
+            collector.collect(script_src, line_offset=offset)
+
+        if not collector.classes and not collector.functions:
+            continue
+
+        js_file_collectors.append((file_path, rel_path, collector))
+        _register_collected(graph, collector, all_classes, all_functions)
+
+    # ── Build cross-reference indexes ───────────────────────────────
     known_class_names = set(all_classes.keys())
 
     methods_by_class: dict[str, dict[str, Node]] = defaultdict(dict)
@@ -393,8 +757,9 @@ def analyze_codebase(root_dir: str) -> Graph:
             methods_by_class[cls_name][fn.name] = fn
 
     # Save (class_collector, rel_collector) pairs for the import-edge pass
-    file_rel_data: list[tuple[_ClassCollector, _RelationshipCollector]] = []
+    file_rel_data: list[tuple] = []
 
+    # ── Pass 2a: Python relationships ───────────────────────────────
     for file_path, rel_path, class_collector in file_collectors:
         source = Path(file_path).read_text(encoding="utf-8")
         tree = ast.parse(source, filename=file_path)
@@ -404,64 +769,35 @@ def analyze_codebase(root_dir: str) -> Graph:
         rel_collector.visit(tree)
         file_rel_data.append((class_collector, rel_collector))
 
-        for cls_name, cls_node in class_collector.classes.items():
-            for base_name in cls_node.bases:
-                simple_base = base_name.split(".")[-1]
-                if simple_base in all_classes:
-                    graph.add_edge(Edge(
-                        source=cls_node.id,
-                        target=all_classes[simple_base].id,
-                        kind=EdgeKind.INHERITS,
-                        label=f"extends {simple_base}",
-                    ))
+        _add_collector_edges(
+            graph, class_collector, rel_collector, mod_qname,
+            all_classes, all_functions, methods_by_class,
+        )
 
-        for context, callee_name, lineno in rel_collector.calls:
-            if context != "__module__" and "." in context:
-                caller_class_name, _caller_method_name = context.split(".", 1)
-                caller_qname = f"{mod_qname}.{context}"
-                caller_fn = all_functions.get(caller_qname)
-                callee_fn = methods_by_class.get(caller_class_name, {}).get(callee_name)
-                if caller_fn and callee_fn:
-                    graph.add_edge(Edge(
-                        source=caller_fn.id,
-                        target=callee_fn.id,
-                        kind=EdgeKind.CALLS,
-                        label=f"calls {callee_name}",
-                    ))
+    # ── Pass 2b: JS / HTML relationships ────────────────────────────
+    for file_path, rel_path, class_collector in js_file_collectors:
+        try:
+            source = Path(file_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
 
-            if callee_name in all_classes:
-                caller_class_name = context.split(".")[0] if context != "__module__" else None
-                if caller_class_name and caller_class_name in all_classes:
-                    graph.add_edge(Edge(
-                        source=all_classes[caller_class_name].id,
-                        target=all_classes[callee_name].id,
-                        kind=EdgeKind.INSTANTIATES,
-                        label=f"creates {callee_name}",
-                    ))
+        # For HTML files, analyse only the inline script content
+        if Path(file_path).suffix.lower() in _HTML_EXTENSIONS:
+            scripts = _extract_html_scripts(source)
+            source = "\n".join(s for s, _ in scripts)
+            class_ranges: dict[str, tuple[int, int]] = {}
+        else:
+            class_ranges = class_collector._class_ranges
 
-        for context, type_name in rel_collector.type_refs:
-            if type_name in all_classes:
-                caller_class_name = context.split(".")[0] if context != "__module__" else None
-                if caller_class_name and caller_class_name in all_classes and caller_class_name != type_name:
-                    graph.add_edge(Edge(
-                        source=all_classes[caller_class_name].id,
-                        target=all_classes[type_name].id,
-                        kind=EdgeKind.USES_TYPE,
-                        label=f"depends on {type_name}",
-                    ))
+        mod_qname = _module_qname(file_path, root_dir)
+        rel_collector = _JSRelationshipCollector(rel_path, mod_qname, known_class_names)
+        rel_collector.collect(source, class_ranges)
+        file_rel_data.append((class_collector, rel_collector))
 
-        # Class name references — catches attribute access (OrderStatus.CONFIRMED)
-        # and bare name references that the call/type-annotation visitors miss.
-        for context, class_name in rel_collector.class_refs:
-            if class_name in all_classes:
-                caller_class_name = context.split(".")[0] if context != "__module__" else None
-                if caller_class_name and caller_class_name in all_classes and caller_class_name != class_name:
-                    graph.add_edge(Edge(
-                        source=all_classes[caller_class_name].id,
-                        target=all_classes[class_name].id,
-                        kind=EdgeKind.USES_TYPE,
-                        label=f"references {class_name}",
-                    ))
+        _add_collector_edges(
+            graph, class_collector, rel_collector, mod_qname,
+            all_classes, all_functions, methods_by_class,
+        )
 
     # ── Fallback IMPORTS edges ──────────────────────────────────────
     # For known classes imported into a file but not directly referenced by
@@ -491,6 +827,105 @@ def analyze_codebase(root_dir: str) -> Graph:
                     ))
 
     return graph
+
+
+def _register_collected(
+    graph: Graph,
+    collector: _JSClassCollector,
+    all_classes: dict[str, Node],
+    all_functions: dict[str, Node],
+) -> None:
+    """Register classes & methods from a JS/HTML collector into the graph."""
+    for cls_name, cls_node in collector.classes.items():
+        all_classes[cls_name] = cls_node
+        graph.add_node(cls_node)
+
+    for fn_qname, fn_node in collector.functions.items():
+        all_functions[fn_qname] = fn_node
+        graph.add_node(fn_node)
+
+        parts = fn_qname.split(".")
+        parent_class_name = parts[-2]
+        if parent_class_name in all_classes:
+            graph.add_edge(Edge(
+                source=all_classes[parent_class_name].id,
+                target=fn_node.id,
+                kind=EdgeKind.CONTAINS,
+                label="has method",
+            ))
+
+
+def _add_collector_edges(
+    graph: Graph,
+    class_collector,
+    rel_collector,
+    mod_qname: str,
+    all_classes: dict[str, Node],
+    all_functions: dict[str, Node],
+    methods_by_class: dict[str, dict[str, Node]],
+) -> None:
+    """Shared edge-creation logic for both Python and JS/HTML collectors."""
+    # Inheritance
+    for cls_name, cls_node in class_collector.classes.items():
+        for base_name in cls_node.bases:
+            simple_base = base_name.split(".")[-1]
+            if simple_base in all_classes:
+                graph.add_edge(Edge(
+                    source=cls_node.id,
+                    target=all_classes[simple_base].id,
+                    kind=EdgeKind.INHERITS,
+                    label=f"extends {simple_base}",
+                ))
+
+    # Calls / instantiations
+    for context, callee_name, lineno in rel_collector.calls:
+        if context != "__module__" and "." in context:
+            caller_class_name, _caller_method_name = context.split(".", 1)
+            caller_qname = f"{mod_qname}.{context}"
+            caller_fn = all_functions.get(caller_qname)
+            callee_fn = methods_by_class.get(caller_class_name, {}).get(callee_name)
+            if caller_fn and callee_fn:
+                graph.add_edge(Edge(
+                    source=caller_fn.id,
+                    target=callee_fn.id,
+                    kind=EdgeKind.CALLS,
+                    label=f"calls {callee_name}",
+                ))
+
+        if callee_name in all_classes:
+            caller_class_name = context.split(".")[0] if context != "__module__" else None
+            if caller_class_name and caller_class_name in all_classes:
+                graph.add_edge(Edge(
+                    source=all_classes[caller_class_name].id,
+                    target=all_classes[callee_name].id,
+                    kind=EdgeKind.INSTANTIATES,
+                    label=f"creates {callee_name}",
+                ))
+
+    # Type references
+    for context, type_name in rel_collector.type_refs:
+        if type_name in all_classes:
+            caller_class_name = context.split(".")[0] if context != "__module__" else None
+            if caller_class_name and caller_class_name in all_classes and caller_class_name != type_name:
+                graph.add_edge(Edge(
+                    source=all_classes[caller_class_name].id,
+                    target=all_classes[type_name].id,
+                    kind=EdgeKind.USES_TYPE,
+                    label=f"depends on {type_name}",
+                ))
+
+    # Class name references
+    for context, class_name in rel_collector.class_refs:
+        if class_name in all_classes:
+            caller_class_name = context.split(".")[0] if context != "__module__" else None
+            if caller_class_name and caller_class_name in all_classes and caller_class_name != class_name:
+                graph.add_edge(Edge(
+                    source=all_classes[caller_class_name].id,
+                    target=all_classes[class_name].id,
+                    kind=EdgeKind.USES_TYPE,
+                    label=f"references {class_name}",
+                ))
+
 
 
 # ── Community-based abstraction ─────────────────────────────────────
@@ -909,9 +1344,17 @@ def _is_test_node(node: Node) -> bool:
     file_name = os.path.basename(file_path)
     if name.startswith("Test") or name.endswith("Test") or name.endswith("Tests"):
         return True
+    # Python conventions
     if file_name.startswith("test_") or file_name.endswith("_test.py") or file_name == "tests.py":
         return True
-    if "/tests/" in file_path or "/test/" in file_path or file_path.startswith("tests/") or file_path.startswith("test/"):
+    # JS/TS conventions (.test.js, .spec.ts, etc.)
+    if ".test." in file_name or ".spec." in file_name:
+        return True
+    # Test directories
+    if ("/tests/" in file_path or "/test/" in file_path
+            or "/__tests__/" in file_path
+            or file_path.startswith("tests/") or file_path.startswith("test/")
+            or file_path.startswith("__tests__/")):
         return True
     return False
 
@@ -983,8 +1426,11 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
     """
     Core name/path/base classifier — shared by both class and metaclass paths.
     Returns a category key or None.
+
+    Uses stem-based file matching so it works across Python, JS/TS and HTML.
     """
     name_lower = name.lower()
+    file_stem = Path(file_name).stem if file_name else ""
 
     # ── EXCEPTION / ERROR / WARNING ────────────────────────────────
     if (any(name.endswith(s) for s in ("Error", "Exception", "Warning", "Fault",
@@ -997,8 +1443,8 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
                                                "userwarning", "deprecationwarning",
                                                "warning"))
             or any("error" in b or "exception" in b or "warning" in b for b in bases_lower)
-            or file_name in ("exceptions.py", "errors.py", "warnings.py",
-                             "faults.py", "exc.py", "failures.py")):
+            or file_stem in ("exceptions", "errors", "warnings",
+                             "faults", "exc", "failures")):
         return "exception"
 
     # ── EVENT / SIGNAL / COMMAND / MESSAGE ─────────────────────────
@@ -1006,9 +1452,9 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
                                         "Notification", "Trigger", "Hook",
                                         "Listener", "Observer", "Subscriber",
                                         "Publisher", "Emitter", "Dispatcher"))
-            or file_name in ("events.py", "signals.py", "commands.py",
-                             "messages.py", "notifications.py", "hooks.py",
-                             "listeners.py", "observers.py", "dispatchers.py")):
+            or file_stem in ("events", "signals", "commands",
+                             "messages", "notifications", "hooks",
+                             "listeners", "observers", "dispatchers")):
         return "event"
 
     # ── TEST ───────────────────────────────────────────────────────
@@ -1016,7 +1462,8 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
             or name.endswith("Spec") or name.endswith("Suite")
             or any("testcase" in b or "testsuit" in b for b in bases_lower)
             or file_name.startswith("test_") or file_name.endswith("_test.py")
-            or file_name in ("tests.py", "spec.py", "conftest.py")):
+            or file_stem in ("tests", "spec", "conftest")
+            or ".test" in file_name or ".spec" in file_name):
         return "test"
 
     # ── MODEL / SCHEMA / DATA ──────────────────────────────────────
@@ -1029,18 +1476,18 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
                                                "document", "base", "typeddict",
                                                "namedtuple"))
             or any("model" in b or "schema" in b for b in bases_lower)
-            or file_name in ("models.py", "schemas.py", "entities.py", "domain.py",
-                             "records.py", "dto.py", "payloads.py",
-                             "serializers.py", "types.py", "structures.py")):
+            or file_stem in ("models", "schemas", "entities", "domain",
+                             "records", "dto", "payloads",
+                             "serializers", "types", "structures")):
         return "model"
 
     # ── CONFIG / SETTINGS ──────────────────────────────────────────
     if (any(name.endswith(s) for s in ("Config", "Settings", "Options", "Constants",
                                         "Configuration", "Env", "Environment",
                                         "Params", "Parameters", "Flags", "Feature"))
-            or file_name in ("config.py", "settings.py", "constants.py",
-                             "configuration.py", "env.py", "params.py",
-                             "flags.py", "features.py")
+            or file_stem in ("config", "settings", "constants",
+                             "configuration", "env", "params",
+                             "flags", "features")
             or "config" in name_lower or "settings" in name_lower):
         return "config"
 
@@ -1051,12 +1498,12 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
                                         "Adapter", "Facade", "Coordinator",
                                         "Orchestrator", "Task", "Job", "Action",
                                         "UseCase", "Interactor", "Builder",
-                                        "Director", "Pipeline"))
-            or file_name in ("services.py", "handlers.py", "controllers.py",
-                             "views.py", "routers.py", "managers.py",
-                             "repositories.py", "gateways.py", "tasks.py",
-                             "jobs.py", "actions.py", "usecases.py",
-                             "pipelines.py", "builders.py")):
+                                        "Director", "Pipeline", "Component"))
+            or file_stem in ("services", "handlers", "controllers",
+                             "views", "routers", "managers",
+                             "repositories", "gateways", "tasks",
+                             "jobs", "actions", "usecases",
+                             "pipelines", "builders", "components")):
         return "handler"
 
     # ── UTILITY / HELPER / MIXIN ───────────────────────────────────
@@ -1068,11 +1515,11 @@ def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Opti
                                         "Proxy", "Wrapper", "Singleton"))
             or name.startswith("Base") or name.startswith("Abstract")
             or name.startswith("Mixin")
-            or file_name in ("utils.py", "helpers.py", "mixins.py", "common.py",
-                             "base.py", "tools.py", "decorators.py", "middleware.py",
-                             "guards.py", "validators.py", "formatters.py",
-                             "parsers.py", "converters.py", "registry.py",
-                             "cache.py", "pool.py", "proxy.py")):
+            or file_stem in ("utils", "helpers", "mixins", "common",
+                             "base", "tools", "decorators", "middleware",
+                             "guards", "validators", "formatters",
+                             "parsers", "converters", "registry",
+                             "cache", "pool", "proxy")):
         return "utility"
 
     return None
@@ -1086,7 +1533,9 @@ def _classify_loose_node(node: Node) -> Optional[str]:
     file_path = node.file_path.replace("\\", "/")
     # Check parent directory names for test detection
     if ("/tests/" in file_path or "/test/" in file_path
-            or file_path.startswith("tests/") or file_path.startswith("test/")):
+            or "/__tests__/" in file_path
+            or file_path.startswith("tests/") or file_path.startswith("test/")
+            or file_path.startswith("__tests__/")):
         return "test"
 
     file_name = os.path.basename(file_path).lower()
