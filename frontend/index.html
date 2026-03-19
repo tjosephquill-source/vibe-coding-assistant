@@ -284,6 +284,14 @@
   .edge.calls        { stroke:#e8a824; }
   .edge.instantiates { stroke:#b8a878; stroke-dasharray:6,3; }
   .edge.uses_type    { stroke:#6dbd4a; stroke-dasharray:4,2; }
+  .edge-label {
+    font-size:10px; font-family:'Rajdhani',sans-serif; font-weight:600;
+    fill:var(--text); opacity:0; pointer-events:none;
+    text-transform:uppercase; letter-spacing:.5px;
+    paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round;
+  }
+  .edge-label.visible { opacity:1; }
+
 
   /* ── Nodes ───────────────────────────────────────────────── */
   .node-group { cursor:pointer; }
@@ -2614,6 +2622,7 @@ let _pendingEnsureTimeouts = [];
 
 // ── Cleanup helper for detail view state ───────────────────────────
 function cleanupDetailView() {
+
   // Cancel any pending init/ensure timeouts from previous render
   if (_pendingDetailTimeout != null) {
     clearTimeout(_pendingDetailTimeout);
@@ -2886,6 +2895,21 @@ function edgePath(d) {
   return `M${start.x},${start.y} L${end.x},${end.y}`;
 }
 
+/** Compute the midpoint position for an edge label. */
+function _edgeLabelPos(d) {
+  const src = (typeof d.source === "object" && d.source !== null) ? d.source : window._nodeData?.find(n => n.id === d.source);
+  const tgt = (typeof d.target === "object" && d.target !== null) ? d.target : window._nodeData?.find(n => n.id === d.target);
+  if (!src || !tgt || src.x == null || tgt.x == null) return { x: 0, y: 0 };
+  const dx = tgt.x - src.x, dy = tgt.y - src.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  const offset = d._curve || 0;
+  return {
+    x: (src.x + tgt.x) / 2 + nx * offset,
+    y: (src.y + tgt.y) / 2 + ny * offset - 6,
+  };
+}
+
 // ── Initial layout helpers ─────────────────────────────────────────
 function buildAdjacency(nodes, links) {
   const adj = new Map(nodes.map(n => [n.id, new Set()]));
@@ -3060,6 +3084,7 @@ function snapNodesToGrid(nodeData, svg, g, node, link) {
   });
   node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   link.attr("d", edgePath);
+    edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
   // Fit immediately (no animation) then animate a refined fit
   const container = document.getElementById("graph-container");
   if (!container) return;
@@ -3425,6 +3450,16 @@ function renderGraph() {
     .attr("marker-end", d => `url(#arrow-${d.kind})`)
     .attr("marker-start", d => d.kind === "contains" ? `url(#diamond-contains-end)` : null);
 
+  // Edge labels (hidden until hover-highlight)
+  const edgeLabel = g.append("g").attr("class", "edge-labels-layer").selectAll("text")
+    .data(linkData).join("text")
+    .attr("class", "edge-label")
+    .attr("text-anchor", "middle")
+    .attr("dominant-baseline", "central")
+    .attr("data-edge-src", d => _nid(d.source))
+    .attr("data-edge-tgt", d => _nid(d.target))
+    .text(d => d.label || d.kind || "");
+
   // Nodes
   const node = g.append("g").selectAll("g")
     .data(nodeData).join("g")
@@ -3495,7 +3530,7 @@ function renderGraph() {
       const pos = posMap[n.id] || posMap.get?.(n.id);
       if (pos) { n.x = pos.x; n.y = pos.y; }
     });
-    window._nodes = node; window._links = link; window._nodeData = nodeData; window._linkData = linkData;
+    window._nodes = node; window._links = link; window._edgeLabels = edgeLabel; window._nodeData = nodeData; window._linkData = linkData;
     const nodeMap = new Map(nodeData.map(n => [n.id, n]));
     linkData.forEach(d => {
       if (typeof d.source === "string") d.source = nodeMap.get(d.source) || d.source;
@@ -3503,6 +3538,7 @@ function renderGraph() {
     });
     node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
     link.attr("d", edgePath);
+    edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
     // Use current container dimensions, not the captured width/height
     const ctr = document.getElementById("graph-container");
     if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
@@ -3528,7 +3564,7 @@ function renderGraph() {
   // ── Try disk cache (async) ─────────────────────────────────────
   // We set up the graph scaffolding first, then check disk cache.
   // If disk has positions, apply them. Otherwise run the simulation.
-  window._nodes = node; window._links = link; window._nodeData = nodeData; window._linkData = linkData;
+  window._nodes = node; window._links = link; window._edgeLabels = edgeLabel; window._nodeData = nodeData; window._linkData = linkData;
 
   _loadPositionsFromDisk(nodeData).then(function(diskPositions) {
     if (diskPositions) {
@@ -3552,9 +3588,10 @@ function renderGraph() {
     // If no nodes have edges, skip the simulation entirely — just grid-layout
     if (!hasAnyEdges) {
       gridLayout(nodeData, width, height);
-      window._nodes = node; window._links = link; window._nodeData = nodeData; window._linkData = linkData;
+      window._nodes = node; window._links = link; window._edgeLabels = edgeLabel; window._nodeData = nodeData; window._linkData = linkData;
       node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
       link.attr("d", edgePath);
+    edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
       const ctr = document.getElementById("graph-container");
       if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
       var eidGrid = setTimeout(function() {
@@ -3605,6 +3642,7 @@ function renderGraph() {
 
     simulation.on("tick", function() {
       link.attr("d", edgePath);
+    edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
       node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
       if (autoFitActive) {
         const now = performance.now();
@@ -3853,6 +3891,7 @@ function populatePanel(d) {
   content.innerHTML = html;
 }
 
+
 function highlightConnected(d) {
   const connectedIds = new Set([d.id]);
   window._linkData.forEach(e => {
@@ -3872,6 +3911,14 @@ function highlightConnected(d) {
     return (sid === d.id || tid === d.id) ? 0.9 : 0.05;
   });
 
+  // Show labels on connected edges
+  if (window._edgeLabels) {
+    window._edgeLabels.classed("visible", e => {
+      const sid = _nid(e.source), tid = _nid(e.target);
+      return (sid === d.id || tid === d.id);
+    });
+  }
+
   // ── Detail panel (bottom) — cloned DOM, no D3 data ────────────
   const zoomSvg = d3.select("#zoom-svg");
   zoomSvg.selectAll(".node-group").each(function() {
@@ -3886,10 +3933,15 @@ function highlightConnected(d) {
     el.selectAll(".node-title").style("opacity", isConn ? 1 : 0.15);
     el.selectAll(".node-kind-inside").style("opacity", isConn ? 1 : 0.15);
   });
-  zoomSvg.selectAll("[data-edge-src]").each(function() {
+  zoomSvg.selectAll("path[data-edge-src]").each(function() {
     const el = d3.select(this);
     const sid = el.attr("data-edge-src"), tid = el.attr("data-edge-tgt");
     el.style("opacity", (sid === d.id || tid === d.id) ? 0.9 : 0.05);
+  });
+  zoomSvg.selectAll(".edge-label").each(function() {
+    const el = d3.select(this);
+    const sid = el.attr("data-edge-src"), tid = el.attr("data-edge-tgt");
+    el.classed("visible", sid === d.id || tid === d.id);
   });
 
   // Don't overwrite the inspector when it's pinned by "Get Info"
@@ -3899,6 +3951,7 @@ function highlightConnected(d) {
 }
 
 function clearHighlight() {
+
   if (!window._nodes || !window._links) return;
 
   // ── Overview panel (top) ──────────────────────────────────────
@@ -3906,6 +3959,11 @@ function clearHighlight() {
   window._nodes.selectAll(".node-title").style("opacity", 1);
   window._nodes.selectAll(".node-kind-inside").style("opacity", 1);
   window._links.style("opacity", 0.5);
+
+  // Hide all edge labels
+  if (window._edgeLabels) {
+    window._edgeLabels.classed("visible", false);
+  }
 
   // ── Detail panel (bottom) ─────────────────────────────────────
   const zoomSvg = d3.select("#zoom-svg");
@@ -3915,7 +3973,8 @@ function clearHighlight() {
     el.selectAll(".node-title").style("opacity", 1);
     el.selectAll(".node-kind-inside").style("opacity", 1);
   });
-  zoomSvg.selectAll("[data-edge-src]").style("opacity", 0.5);
+  zoomSvg.selectAll("path[data-edge-src]").style("opacity", 0.5);
+  zoomSvg.selectAll(".edge-label").classed("visible", false);
 
   // Don't overwrite the inspector when it's pinned
   if (!_inspectorPinned) {
