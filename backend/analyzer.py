@@ -172,7 +172,57 @@ class Graph:
             d["intermediate_nodes"] = [_node_to_dict(n) for n in self.intermediate_nodes]
         if self.intermediate_edges:
             d["intermediate_edges"] = [_edge_to_dict(e) for e in self.intermediate_edges]
+        _enrich_languages(d)
         return d
+
+
+_EXT_TO_LANG: dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript", ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "typescript",
+    ".html": "html", ".htm": "html",
+}
+
+
+def _enrich_languages(graph_dict: dict) -> None:
+    """Add a ``languages`` list to every node dict.
+
+    For leaf nodes the language is derived from the file extension.
+    For container nodes (metaclass / *_group) the languages are the
+    union of their members' languages, resolved recursively.
+    """
+    by_id: dict[str, dict] = {}
+    for nd in graph_dict.get("nodes", []):
+        by_id[nd["id"]] = nd
+    for nd in graph_dict.get("intermediate_nodes", []):
+        by_id[nd["id"]] = nd
+
+    cache: dict[str, set[str]] = {}
+
+    def _langs(node_id: str) -> set[str]:
+        if node_id in cache:
+            return cache[node_id]
+        nd = by_id.get(node_id)
+        if not nd:
+            cache[node_id] = set()
+            return cache[node_id]
+        fp = nd.get("file_path", "")
+        ext = os.path.splitext(fp)[1].lower() if fp else ""
+        lang = _EXT_TO_LANG.get(ext)
+        if lang:
+            cache[node_id] = {lang}
+            return cache[node_id]
+        # Aggregate from members (metaclass / group nodes)
+        result: set[str] = set()
+        for mid in nd.get("member_ids") or []:
+            result.update(_langs(mid))
+        cache[node_id] = result
+        return result
+
+    for nd in graph_dict.get("nodes", []):
+        nd["languages"] = sorted(_langs(nd["id"]))
+    for nd in graph_dict.get("intermediate_nodes", []):
+        nd["languages"] = sorted(_langs(nd["id"]))
 
 
 def _node_to_dict(n: Node) -> dict:
@@ -1960,6 +2010,20 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
         seen_edges.add(edge_key)
 
         out.add_edge(Edge(source=s, target=t, kind=e.kind, label=e.label))
+
+    # Carry forward existing intermediates + save collapsed nodes/edges
+    out.intermediate_nodes = list(graph.intermediate_nodes)
+    out.intermediate_edges = list(graph.intermediate_edges)
+    for n in graph.nodes:
+        if n.id in all_collapsed:
+            out.intermediate_nodes.append(n)
+    for e in graph.edges:
+        if e.kind == EdgeKind.CONTAINS:
+            continue
+        if e.source in all_collapsed and e.target in all_collapsed:
+            # Both endpoints collapsed into the same or different groups
+            if id_remap.get(e.source) == id_remap.get(e.target):
+                out.intermediate_edges.append(e)
 
     return out
 

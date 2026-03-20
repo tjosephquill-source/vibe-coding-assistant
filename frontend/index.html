@@ -313,6 +313,13 @@
     text-transform:uppercase; letter-spacing:1px;
     font-family:'Rajdhani',sans-serif; font-weight:600; pointer-events:none;
   }
+
+  /* ── Language icons ─────────────────────────────────────── */
+  .lang-icon-label {
+    font-size:8px; font-weight:700; pointer-events:none;
+    font-family:'Rajdhani',sans-serif; text-anchor:middle;
+    dominant-baseline:central;
+  }
   .node-methods-fo { pointer-events:auto; }
   .node-methods-box {
     color:#b8a878; font-size:11px;
@@ -2561,6 +2568,68 @@ const GRID_SNAP_COL_GAP = 560;
 const GRID_SNAP_ROW_GAP = 380;
 const PARALLEL_EDGE_SPACING = 28;
 
+// ── Language icon definitions ──────────────────────────────────────
+const _LANG_ICON = {
+  python:     { bg: "#306998", fg: "#FFD43B", label: "PY" },
+  javascript: { bg: "#F7DF1E", fg: "#000",    label: "JS" },
+  typescript: { bg: "#3178C6", fg: "#fff",     label: "TS" },
+  html:       { bg: "#E34F26", fg: "#fff",     label: "<>" },
+};
+const _LANG_ICON_R = 9;   // circle radius
+const _LANG_ICON_GAP = 4; // gap between icons
+
+// Python logo SVG path (simplified two-snake mark, viewBox 0 0 24 24)
+const _PY_LOGO_PATH = "M12.2 2.5c-2.6 0-4.2.9-4.2 2.3V7h4.2v.7H6.5C4.6 7.7 3 9.3 3 12s1.5 4.3 3.5 4.3H8.5V13.5c0-2 1.6-3.5 3.5-3.5h4.2c1.5 0 2.7-1.2 2.7-2.7V5.1c0-1.5-2-2.6-4.5-2.6h-2.2zm-2 1.5a.9.9 0 110 1.8.9.9 0 010-1.8zM12.8 21.5c2.6 0 4.2-.9 4.2-2.3V17h-4.2v-.7h5.7c1.9 0 3.5-1.6 3.5-4.3s-1.5-4.3-3.5-4.3H16.5v2.8c0 2-1.6 3.5-3.5 3.5H8.8c-1.5 0-2.7 1.2-2.7 2.7v2.2c0 1.5 2 2.6 4.5 2.6h2.2zm2-1.5a.9.9 0 110-1.8.9.9 0 010 1.8z";
+
+/**
+ * Append language icon circles to a D3 selection of node <g> elements.
+ * Each node datum must have a `languages` array (e.g. ["python","javascript"]).
+ */
+function _appendLangIcons(nodeSelection) {
+  nodeSelection.each(function(d) {
+    const langs = d.languages;
+    if (!langs || langs.length === 0) return;
+
+    const g = d3.select(this);
+    const w = (NODE_SIZE[d.kind]?.w || 160);
+    const h = (NODE_SIZE[d.kind]?.h || 60);
+    const r = _LANG_ICON_R;
+    const startX = w / 2 - r - 4;             // right edge inset
+    const startY = -h / 2 + r + 4;            // top edge inset
+
+    langs.forEach(function(lang, i) {
+      const def = _LANG_ICON[lang];
+      if (!def) return;
+      const cx = startX - i * (r * 2 + _LANG_ICON_GAP);
+      const cy = startY;
+
+      g.append("circle")
+        .attr("class", "lang-icon-bg")
+        .attr("cx", cx).attr("cy", cy).attr("r", r)
+        .attr("fill", def.bg)
+        .attr("stroke", "rgba(0,0,0,.35)")
+        .attr("stroke-width", 1)
+        .style("pointer-events", "none");
+
+      if (lang === "python") {
+        // Use the actual Python logo path
+        g.append("path")
+          .attr("d", _PY_LOGO_PATH)
+          .attr("transform", "translate(" + (cx - r + 1) + "," + (cy - r + 1) + ") scale(" + ((r * 2 - 2) / 24) + ")")
+          .attr("fill", def.fg)
+          .style("pointer-events", "none");
+      } else {
+        g.append("text")
+          .attr("class", "lang-icon-label")
+          .attr("x", cx).attr("y", cy)
+          .attr("fill", def.fg)
+          .style("pointer-events", "none")
+          .text(def.label);
+      }
+    });
+  });
+}
+
 const MARKER_OFFSET = {
   inherits:     18,
   calls:        14,
@@ -3646,6 +3715,9 @@ function renderGraph() {
 
   node.append("text").attr("class","node-title").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+18).attr("text-anchor","start").text(d=>d.name);
   node.append("text").attr("class","node-kind-inside").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+34).attr("text-anchor","start").text(d=>d.kind);
+
+  // Language icons (top-right corner)
+  _appendLangIcons(node);
 
   const classFo = node.filter(d => d.kind === "class")
     .append("foreignObject").attr("class","node-methods-fo")
