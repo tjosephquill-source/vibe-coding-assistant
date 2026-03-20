@@ -133,6 +133,7 @@ async def api_select_project(request: Request):
         return JSONResponse({"error": "Project not found."}, status_code=404)
     # Clear in-memory caches so endpoints serve the new project
     _graph_cache.clear()
+    _node_desc_cache.clear()
     return {"status": "ok", "current_id": pid}
 
 
@@ -471,6 +472,102 @@ async def save_layout(request: Request):
 
 
 # ── LLM Chat endpoint ───────────────────────────────────────────────
+
+# ── Node description endpoint (GPT-powered hover descriptions) ──────
+
+_node_desc_cache: dict[str, str] = {}  # content_hash → description
+
+
+@app.post("/api/node-description")
+async def node_description(request: Request):
+    """Generate a 1-2 sentence AI description of a node's purpose.
+
+    Body: {node_name, node_kind, file_path, line_start, line_end, content_hash?}
+
+    The server caches results keyed on a hash of the source code so
+    descriptions are regenerated only when the underlying code changes.
+    """
+    body = await request.json()
+    node_name = body.get("node_name", "")
+    node_kind = body.get("node_kind", "")
+    file_path = body.get("file_path", "")
+    line_start = body.get("line_start", 0)
+    line_end = body.get("line_end", 0)
+    members = body.get("members")  # for metaclass / group nodes
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "OPENAI_API_KEY not set"}, status_code=500)
+
+    abs_root = _active_codebase_path()
+    if not abs_root:
+        return JSONResponse({"error": "No project selected"}, status_code=404)
+
+    # Build the source snippet for leaf nodes
+    snippet = ""
+    if file_path and line_start and line_end:
+        full = os.path.normpath(os.path.join(abs_root, file_path))
+        if os.path.isfile(full):
+            try:
+                lines = Path(full).read_text(encoding="utf-8", errors="replace").splitlines()
+                snippet = "\n".join(lines[max(0, line_start - 1):line_end])
+                # Cap snippet size
+                if len(snippet) > 4000:
+                    snippet = snippet[:4000] + "\n… [truncated]"
+            except OSError:
+                pass
+
+    # Build cache key from content hash
+    if snippet:
+        content_hash = hashlib.md5(snippet.encode()).hexdigest()[:16]
+    elif members:
+        content_hash = hashlib.md5(json.dumps(members, sort_keys=True).encode()).hexdigest()[:16]
+    else:
+        content_hash = hashlib.md5(f"{node_name}:{node_kind}".encode()).hexdigest()[:16]
+
+    cache_key = f"{node_name}|{node_kind}|{content_hash}"
+
+    # Check cache
+    if cache_key in _node_desc_cache:
+        return {"description": _node_desc_cache[cache_key], "cached": True}
+
+    # Build prompt
+    if snippet:
+        user_msg = (
+            f"Describe the purpose of this {node_kind} named '{node_name}' in 1-2 brief sentences. "
+            f"Focus on what it does and its role in the codebase. Be concise.\n\n```\n{snippet}\n```"
+        )
+    elif members:
+        user_msg = (
+            f"This is a '{node_kind}' group node named '{node_name}' that contains these members: "
+            f"{', '.join(members[:20])}. "
+            f"Describe its purpose in 1-2 brief sentences. Focus on what this grouping represents."
+        )
+    else:
+        user_msg = (
+            f"Describe the likely purpose of a {node_kind} named '{node_name}' in a codebase, "
+            f"in 1-2 brief sentences."
+        )
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key)
+
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-5.4",
+            messages=[
+                {"role": "system", "content": "You are a concise code documentation assistant. Respond with exactly 1-2 sentences describing the purpose of the given code element. No markdown, no bullet points."},
+                {"role": "user", "content": user_msg},
+            ],
+            max_completion_tokens=120,
+            temperature=0.3,
+        )
+        description = resp.choices[0].message.content.strip()
+        _node_desc_cache[cache_key] = description
+        return {"description": description, "cached": False, "content_hash": content_hash}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 @app.get("/api/chat/models")
 def get_chat_models():

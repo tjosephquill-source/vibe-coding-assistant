@@ -261,6 +261,54 @@
   .breadcrumb-item:hover:not(.active) { color:var(--accent); text-shadow:0 0 6px var(--accent-glow); }
   .breadcrumb-item.active { color:var(--tan); cursor:default; }
 
+  /* ── Node description panel ──────────────────────────────── */
+  #node-desc-container {
+    position:relative; width:100%; height:100%; overflow:hidden;
+    background:radial-gradient(ellipse at center,#10140c,#080a06);
+  }
+  #node-desc-bar {
+    width:100%; height:100%; box-sizing:border-box;
+    padding:5% 6%;
+    background:none; border:none;
+    font-family:'Rajdhani',sans-serif;
+    color:var(--text-muted); line-height:1.45;
+    display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
+    text-align:left; gap:0.4em;
+    transition:opacity .2s;
+  }
+  #node-desc-bar .desc-header {
+    display:flex; align-items:center; gap:0.4em;
+  }
+  #node-desc-bar .desc-node-name {
+    color:var(--tan); font-weight:700;
+    text-transform:uppercase; letter-spacing:.5px;
+    font-size:1.3em;
+  }
+  #node-desc-bar .desc-kind {
+    font-weight:600; text-transform:uppercase; letter-spacing:1px;
+    padding:0.1em 0.4em; border-radius:3px;
+    color:var(--text-muted); border:1px solid var(--border-hi);
+    background:rgba(18,22,14,.7);
+    font-size:0.45em;
+  }
+  #node-desc-bar .desc-text {
+    color:#b8a878;
+    white-space:normal; word-wrap:break-word;
+    font-size:1em;
+  }
+  #node-desc-bar .desc-loading {
+    color:var(--text-muted); font-style:italic;
+  }
+  #node-desc-bar.empty .desc-placeholder {
+    display:block;
+  }
+  #node-desc-bar .desc-placeholder {
+    display:none; color:var(--text-muted); font-style:italic;
+    opacity:.6;
+  }
+  #node-desc-bar.empty .desc-header,
+  #node-desc-bar.empty .desc-text { display:none; }
+
   /* ── Panels ──────────────────────────────────────────────── */
   #graph-container {
     position:relative; width:100%; height:100%; overflow:hidden;
@@ -1000,6 +1048,20 @@ PanelRegistry.register({
   floatable: true,
   render: function (content) {
     // updateLegend() will populate this
+  },
+});
+
+PanelRegistry.register({
+  id: 'node-description',
+  title: 'Node Description',
+  icon: '💡',
+  contentId: 'node-desc-container',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    content.innerHTML = '<div id="node-desc-bar" class="empty"><span class="desc-placeholder">Hover over a node to see its description</span></div>';
+    // Scale font size relative to the panel dimensions
+    _nodeDescResizeObserver(content);
   },
 });
 
@@ -3118,9 +3180,11 @@ function _edgeLabelPos(d) {
   const len = Math.hypot(dx, dy) || 1;
   const nx = -dy / len, ny = dx / len;
   const offset = d._curve || 0;
+  // Stagger along the edge direction so parallel labels don't overlap
+  const along = offset * 0.6;
   return {
-    x: (src.x + tgt.x) / 2 + nx * offset,
-    y: (src.y + tgt.y) / 2 + ny * offset - 6,
+    x: (src.x + tgt.x) / 2 + nx * offset + (dx / len) * along,
+    y: (src.y + tgt.y) / 2 + ny * offset + (dy / len) * along - 6,
   };
 }
 
@@ -3228,6 +3292,8 @@ function gridLayout(nodeData, width, height) {
 // ── Render ─────────────────────────────────────────────────────────
 // Height of the breadcrumb bar (used to offset the fit area)
 const _BREADCRUMB_H = 30;
+// Height of the description bar at the bottom
+const _DESC_BAR_H = 0;
 
 function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding, animate) {
   if (padding === undefined) padding = 40;
@@ -3238,7 +3304,7 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
   // Extra top padding so nodes don't hide behind the breadcrumb
   var padTop = padding + _BREADCRUMB_H;
   var padSide = padding;
-  var padBottom = padding;
+  var padBottom = padding + _DESC_BAR_H;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   nodeData.forEach(n => {
@@ -4193,7 +4259,123 @@ function populatePanel(d) {
 }
 
 
+// ── Node description bar (AI hover descriptions) ───────────────────
+
+// Cache: nodeId → { description, contentHash }
+const _nodeDescCache = new Map();
+let _nodeDescAbort = null;   // current AbortController
+let _nodeDescHoverId = null; // node ID currently being described
+
+function _contentHashForNode(d) {
+  // Simple hash from node identity + code location
+  var raw = (d.file_path || '') + ':' + (d.line_start || 0) + ':' + (d.line_end || 0) + ':' + d.name;
+  // FNV-1a-ish quick hash
+  var h = 0x811c9dc5;
+  for (var i = 0; i < raw.length; i++) { h ^= raw.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16);
+}
+
+function _descBarHtml(d, bodyHtml) {
+  var kindLabel = (d.kind || '').replace(/_/g, ' ');
+  return '<div class="desc-header"><span class="desc-node-name">' + _escHtml(d.name) + '</span><span class="desc-kind">' + _escHtml(kindLabel) + '</span></div>' + bodyHtml;
+}
+
+function _showNodeDesc(d) {
+  var bar = document.getElementById('node-desc-bar');
+  if (!bar) return;
+  _nodeDescHoverId = d.id;
+  var hash = _contentHashForNode(d);
+  var cached = _nodeDescCache.get(d.id);
+
+  // If cached and hash matches, show immediately
+  if (cached && cached.contentHash === hash) {
+    bar.className = '';
+    bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(cached.description) + '</span>');
+    return;
+  }
+
+  // Show loading state
+  bar.className = '';
+  bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">Generating description…</span>');
+
+  // Abort previous request
+  if (_nodeDescAbort) { _nodeDescAbort.abort(); _nodeDescAbort = null; }
+
+  var controller = new AbortController();
+  _nodeDescAbort = controller;
+
+  var body = {
+    node_name: d.name,
+    node_kind: d.kind,
+    file_path: d.file_path || '',
+    line_start: d.line_start || 0,
+    line_end: d.line_end || 0,
+  };
+  if (d.members && d.members.length > 0) body.members = d.members;
+
+  fetch(API_BASE + '/api/node-description', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (_nodeDescHoverId !== d.id) return; // stale
+      if (data.error) {
+        bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">' + _escHtml(data.error) + '</span>');
+        return;
+      }
+      _nodeDescCache.set(d.id, { description: data.description, contentHash: hash });
+      bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(data.description) + '</span>');
+    })
+    .catch(function(err) {
+      if (err.name === 'AbortError') return;
+      if (_nodeDescHoverId !== d.id) return;
+      bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">Failed to load description</span>');
+    });
+}
+
+function _hideNodeDesc() {
+  _nodeDescHoverId = null;
+  if (_nodeDescAbort) { _nodeDescAbort.abort(); _nodeDescAbort = null; }
+  var bar = document.getElementById('node-desc-bar');
+  if (bar) {
+    bar.className = 'empty';
+    bar.innerHTML = '<span class="desc-placeholder">Hover over a node to see its description</span>';
+  }
+}
+
+function _escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+/** Observe the panel container and scale the desc bar font size to fit. */
+function _nodeDescResizeObserver(container) {
+  if (!window.ResizeObserver) return;
+  var ro = new ResizeObserver(function(entries) {
+    var entry = entries[0];
+    if (!entry) return;
+    var w = entry.contentRect.width;
+    var h = entry.contentRect.height;
+    var bar = document.getElementById('node-desc-bar');
+    if (!bar) return;
+    // Base font size on the smaller dimension, clamped
+    var base = Math.min(w, h) * 0.09;
+    base = Math.max(10, Math.min(base, 40));
+    bar.style.fontSize = base + 'px';
+    // Kind tag stays proportionally smaller
+    var kindEl = bar.querySelector('.desc-kind');
+    if (kindEl) kindEl.style.fontSize = (base * 0.45) + 'px';
+  });
+  ro.observe(container);
+}
+
+
 function highlightConnected(d) {
+  _showNodeDesc(d);
   const connectedIds = new Set([d.id]);
   window._linkData.forEach(e => {
     const sid = _nid(e.source), tid = _nid(e.target);
@@ -4252,6 +4434,7 @@ function highlightConnected(d) {
 }
 
 function clearHighlight() {
+  _hideNodeDesc();
 
   if (!window._nodes || !window._links) return;
 
@@ -4382,6 +4565,7 @@ function _reloadAllData() {
   intermediateGraphData = { nodes: [], edges: [] };
   graphStack = [];
   _positionCache.clear();
+  _nodeDescCache.clear();
   currentGraphLabel = "Overview";
   updateBreadcrumb();
 
