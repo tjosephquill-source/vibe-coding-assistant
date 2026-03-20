@@ -237,18 +237,29 @@
   body.wm-resizing-vertical   { cursor:row-resize !important; }
   body.wm-docking { cursor:grabbing; }
 
-  /* ── Back button ─────────────────────────────────────────── */
-  #back-btn {
-    position:fixed; top:40px; left:12px; z-index:9999;
-    padding:6px 14px; border:1px solid var(--border-hi);
-    background:var(--surface); color:var(--tan);
-    font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:1px;
-    cursor:pointer; display:none;
-    box-shadow:0 4px 14px rgba(0,0,0,.5);
-    clip-path:var(--clip-sm); transition:all .15s;
+  /* ── Breadcrumb navigation ────────────────────────────────── */
+  #graph-breadcrumb {
+    position:absolute; top:8px; left:10px; z-index:10;
+    display:flex; align-items:center; gap:0;
+    font-size:11px; font-family:'Rajdhani',sans-serif; font-weight:600;
+    text-transform:uppercase; letter-spacing:.8px;
+    pointer-events:auto;
+    background:rgba(18,22,14,.85);
+    border:1px solid var(--border);
+    clip-path:var(--clip-sm);
   }
-  #back-btn.visible { display:inline-flex; align-items:center; }
-  #back-btn:hover { border-color:var(--accent); color:var(--accent); text-shadow:0 0 6px var(--accent-glow); }
+  #graph-breadcrumb:empty { display:none; }
+  .breadcrumb-sep {
+    color:var(--border-hi); font-size:10px; padding:0 2px;
+    pointer-events:none; user-select:none;
+  }
+  .breadcrumb-item {
+    color:var(--text-muted); cursor:pointer; padding:3px 8px;
+    white-space:nowrap;
+    transition:color .15s;
+  }
+  .breadcrumb-item:hover:not(.active) { color:var(--accent); text-shadow:0 0 6px var(--accent-glow); }
+  .breadcrumb-item.active { color:var(--tan); cursor:default; }
 
   /* ── Panels ──────────────────────────────────────────────── */
   #graph-container {
@@ -879,7 +890,6 @@
 </head>
 <body>
 
-<button id="back-btn">← Back</button>
 
 <div id="wm-toolbar">
   <div class="project-group">
@@ -952,7 +962,7 @@ PanelRegistry.register({
   closable: true,
   floatable: true,
   render: function (content) {
-    content.innerHTML = '<div class="panel-label">Overview</div><div class="panel-loading" data-loading>Analyzing codebase…</div><svg id="graph-svg" style="width:100%;height:100%"></svg>';
+    content.innerHTML = '<div id="graph-breadcrumb"></div><div class="panel-loading" data-loading>Analyzing codebase…</div><svg id="graph-svg" style="width:100%;height:100%"></svg>';
   },
 });
 
@@ -2863,15 +2873,47 @@ function _deferStopAutoScroll(nodeId) {
   }, 150);
 }
 
-function updateBackButton() {
-  const backBtn = document.getElementById("back-btn");
-  backBtn.classList.toggle("visible", graphStack.length > 0);
+function updateBreadcrumb() {
+  const el = document.getElementById("graph-breadcrumb");
+  if (!el) return;
+
+  // Build the path: all stack entries + current label
+  const crumbs = graphStack.map(function(entry) { return entry.label; });
+  crumbs.push(currentGraphLabel || "Overview");
+
+  el.innerHTML = "";
+  crumbs.forEach(function(label, i) {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = "›";
+      el.appendChild(sep);
+    }
+    const span = document.createElement("span");
+    span.className = "breadcrumb-item";
+    span.textContent = label;
+    if (i === crumbs.length - 1) {
+      span.classList.add("active");
+    } else {
+      span.addEventListener("click", function() {
+        if (i === 0) {
+          graphStack = [];
+          _setGraphView(rootGraphData, "Overview");
+        } else {
+          var target = graphStack[i];
+          graphStack = graphStack.slice(0, i);
+          _setGraphView(target.graph, target.label);
+        }
+      });
+    }
+    el.appendChild(span);
+  });
 }
 
 function _setGraphView(nextGraph, label) {
   graphData = nextGraph;
   currentGraphLabel = label || "Overview";
-  updateBackButton();
+  updateBreadcrumb();
   updateLegend(graphData);
   var dp = document.getElementById("detail-panel");
   if (dp) dp.classList.remove("open");
@@ -3008,21 +3050,18 @@ function drillIntoNode(d) {
     if (!d.methods || d.methods.length === 0) { selectNode(d); return; }
     const sub = buildClassMethodGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    updateBackButton();
     _setGraphView(sub, `Class: ${d.name}`);
     return;
   }
   if (d.kind === "metaclass") {
     const sub = buildMetaclassClassGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    updateBackButton();
     _setGraphView(sub, `Metaclass: ${d.name}`);
     return;
   }
   if (_GROUP_KINDS.has(d.kind)) {
     const sub = buildGroupGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    updateBackButton();
     _setGraphView(sub, d.name);
     return;
   }
@@ -3187,11 +3226,19 @@ function gridLayout(nodeData, width, height) {
 }
 
 // ── Render ─────────────────────────────────────────────────────────
+// Height of the breadcrumb bar (used to offset the fit area)
+const _BREADCRUMB_H = 30;
+
 function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding, animate) {
   if (padding === undefined) padding = 40;
   if (animate === undefined) animate = true;
   if (!nodeData || nodeData.length === 0) return;
   if (width <= 0 || height <= 0) return;
+
+  // Extra top padding so nodes don't hide behind the breadcrumb
+  var padTop = padding + _BREADCRUMB_H;
+  var padSide = padding;
+  var padBottom = padding;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   nodeData.forEach(n => {
@@ -3203,12 +3250,12 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
   });
   const graphW = Math.max(1, maxX - minX);
   const graphH = Math.max(1, maxY - minY);
-  const availW = Math.max(1, width - padding * 2);
-  const availH = Math.max(1, height - padding * 2);
+  const availW = Math.max(1, width - padSide * 2);
+  const availH = Math.max(1, height - padTop - padBottom);
   // Don't clamp to a max — allow arbitrarily small scales so all nodes fit
   const scale = Math.min(availW / graphW, availH / graphH);
   const tx = (width - graphW * scale) / 2 - minX * scale;
-  const ty = (height - graphH * scale) / 2 - minY * scale;
+  const ty = padTop + (availH - graphH * scale) / 2 - minY * scale;
   const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
   if (animate) { svg.transition().duration(250).call(zoomBehavior.transform, t); }
   else { svg.call(zoomBehavior.transform, t); }
@@ -4237,19 +4284,7 @@ function clearHighlight() {
   }
 }
 
-// Drill navigation
-document.getElementById("back-btn").addEventListener("click", function() {
-  if (graphStack.length) {
-    const prev = graphStack.pop();
-    updateBackButton();
-    _setGraphView(prev.graph, prev.label);
-    return;
-  }
-  if (rootGraphData && currentGraphLabel !== "Overview") {
-    _setGraphView(rootGraphData, "Overview");
-  }
-  updateBackButton();
-});
+// Drill navigation is now handled by the breadcrumb (see updateBreadcrumb)
 
 // ── Resize ─────────────────────────────────────────────────────────
 var _wmResizeDebounce = null;
@@ -4347,6 +4382,8 @@ function _reloadAllData() {
   intermediateGraphData = { nodes: [], edges: [] };
   graphStack = [];
   _positionCache.clear();
+  currentGraphLabel = "Overview";
+  updateBreadcrumb();
 
   // Reset graph visuals
   var graphSvg = document.getElementById('graph-svg');
