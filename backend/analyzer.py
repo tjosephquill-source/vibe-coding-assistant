@@ -128,6 +128,7 @@ class Node:
     line_start: int
     line_end: int
     methods: list[str] = field(default_factory=list)
+    variables: list[dict] = field(default_factory=list)    # [{"name": ..., "type": ...}, ...]
     members: list[str] = field(default_factory=list)      # for metaclass nodes
     member_ids: list[str] = field(default_factory=list)   # for metaclass drilldown
     bases: list[str] = field(default_factory=list)
@@ -193,6 +194,141 @@ def _make_id(file_path: str, name: str) -> str:
 
 # ── AST visitor ─────────────────────────────────────────────────────
 
+
+def _extract_class_variables(class_node: ast.ClassDef) -> list[dict]:
+    """Extract class-level and instance-level variables with their types.
+
+    Handles:
+      - Annotated class attributes:  ``name: str``
+      - Assigned class attributes:   ``name = value``
+      - Instance attributes in __init__:  ``self.name = value``
+      - Annotated __init__ params:   ``def __init__(self, name: str)``
+    Returns a de-duplicated list of ``{"name": ..., "type": ...}`` dicts.
+    """
+    seen: dict[str, str] = {}  # name → type (last wins)
+
+    for item in class_node.body:
+        # ── Class-level annotated assignments:  name: str [= ...] ──
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            var_name = item.target.id
+            var_type = ast.unparse(item.annotation) if item.annotation else "unknown"
+            seen[var_name] = var_type
+
+        # ── Class-level plain assignments:  name = value ──
+        elif isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name):
+                    var_name = target.id
+                    if var_name not in seen:
+                        seen[var_name] = _infer_type_from_value(item.value)
+
+        # ── Instance variables from __init__ ──
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__":
+            # First, collect annotated parameter types
+            param_types: dict[str, str] = {}
+            for arg in item.args.args:
+                if arg.arg == "self":
+                    continue
+                if arg.annotation:
+                    param_types[arg.arg] = ast.unparse(arg.annotation)
+
+            for stmt in ast.walk(item):
+                # self.name: type = ...
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Attribute):
+                    if isinstance(stmt.target.value, ast.Name) and stmt.target.value.id == "self":
+                        var_name = stmt.target.attr
+                        var_type = ast.unparse(stmt.annotation) if stmt.annotation else "unknown"
+                        seen[var_name] = var_type
+
+                # self.name = value
+                elif isinstance(stmt, ast.Assign):
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                            var_name = target.attr
+                            if var_name not in seen:
+                                # Try to infer from matching param annotation
+                                if isinstance(stmt.value, ast.Name) and stmt.value.id in param_types:
+                                    seen[var_name] = param_types[stmt.value.id]
+                                else:
+                                    seen[var_name] = _infer_type_from_value(stmt.value)
+
+    return [{"name": n, "type": t} for n, t in seen.items()]
+
+
+def _infer_type_from_value(node: ast.expr) -> str:
+    """Best-effort type inference from an AST value node."""
+    if isinstance(node, ast.Constant):
+        return type(node.value).__name__
+    if isinstance(node, ast.List):
+        return "list"
+    if isinstance(node, ast.Dict):
+        return "dict"
+    if isinstance(node, ast.Set):
+        return "set"
+    if isinstance(node, ast.Tuple):
+        return "tuple"
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+    if isinstance(node, ast.NameConstant):  # Python 3.7 compat
+        return type(node.value).__name__
+    return "unknown"
+
+
+def _extract_method_variables(func_node: ast.FunctionDef) -> list[dict]:
+    """Extract parameters and local variables with their types from a method.
+
+    Handles:
+      - Annotated parameters:  ``def f(x: int)``
+      - Return type:           ``def f() -> str``
+      - Annotated locals:      ``x: int = ...``
+      - Assigned locals:       ``x = value``
+    Returns a list of ``{"name": ..., "type": ...}`` dicts.
+    """
+    seen: dict[str, str] = {}
+
+    # ── Parameters ──
+    for arg in func_node.args.args:
+        if arg.arg == "self" or arg.arg == "cls":
+            continue
+        if arg.annotation:
+            seen[arg.arg] = ast.unparse(arg.annotation)
+        else:
+            seen[arg.arg] = "unknown"
+
+    # *args
+    if func_node.args.vararg:
+        va = func_node.args.vararg
+        t = ast.unparse(va.annotation) if va.annotation else "unknown"
+        seen[f"*{va.arg}"] = t
+
+    # **kwargs
+    if func_node.args.kwarg:
+        kw = func_node.args.kwarg
+        t = ast.unparse(kw.annotation) if kw.annotation else "unknown"
+        seen[f"**{kw.arg}"] = t
+
+    # ── Return type ──
+    if func_node.returns:
+        seen["return"] = ast.unparse(func_node.returns)
+
+    # ── Local variables (top-level statements in the function body only) ──
+    for stmt in func_node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            name = stmt.target.id
+            if name not in seen:
+                seen[name] = ast.unparse(stmt.annotation) if stmt.annotation else "unknown"
+        elif isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                if isinstance(target, ast.Name):
+                    name = target.id
+                    if name not in seen:
+                        seen[name] = _infer_type_from_value(stmt.value)
+
+    return [{"name": n, "type": t} for n, t in seen.items()]
+
 class _ClassCollector(ast.NodeVisitor):
     """First pass: collect all class and function definitions."""
 
@@ -228,6 +364,7 @@ class _ClassCollector(ast.NodeVisitor):
             line_start=node.lineno,
             line_end=node.end_lineno or node.lineno,
             methods=methods,
+            variables=_extract_class_variables(node),
             bases=bases,
             docstring=ast.get_docstring(node),
         )
@@ -254,6 +391,7 @@ class _ClassCollector(ast.NodeVisitor):
             file_path=self.file_path,
             line_start=node.lineno,
             line_end=node.end_lineno or node.lineno,
+            variables=_extract_method_variables(node),
             docstring=ast.get_docstring(node),
         )
         self.functions[qname] = fn_node
@@ -365,7 +503,7 @@ _JS_METHOD_PAT = re.compile(
     r"^\s+(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?"
     r"(?!if\b|for\b|while\b|switch\b|catch\b|return\b|throw\b|new\b|else\b"
     r"|var\b|let\b|const\b|import\b|export\b)"
-    r"(\w+)\s*\([^)]*\)[^{\n]*\{",
+    r"(\w+)\s*\(([^)]*)\)[^{\n]*\{",
     re.MULTILINE,
 )
 
@@ -377,6 +515,25 @@ _JS_NEW_PAT = re.compile(r"\bnew\s+(\w+)\s*(?:<[^>]*>)?\s*\(")
 
 _JS_REQUIRE_PAT = re.compile(
     r"(?:const|let|var)\s+(?:\{([^}]+)\}|(\w+))\s*=\s*require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)",
+)
+
+# ── JS/TS class property patterns ──────────────────────────────────
+
+# this.propName = ...  (in constructor)
+_JS_THIS_ASSIGN_PAT = re.compile(
+    r"\bthis\.(\w+)\s*=",
+)
+
+# TypeScript class field:  propName: Type  or  propName: Type = value
+_TS_CLASS_FIELD_PAT = re.compile(
+    r"^\s+(?:(?:public|private|protected|readonly|static|override|abstract)\s+)*"
+    r"(\w+)\s*(?:\?\s*)?:\s*([\w\[\]<>,\s|&]+?)(?:\s*=|;|\n)",
+    re.MULTILINE,
+)
+
+# TypeScript constructor parameter property:  constructor(public name: Type, ...)
+_TS_CTOR_PARAM_PAT = re.compile(
+    r"(?:public|private|protected|readonly)\s+(\w+)\s*(?:\?\s*)?:\s*([\w\[\]<>,\s|&]+?)(?:\s*[,)])",
 )
 
 _HTML_SCRIPT_PAT = re.compile(
@@ -451,6 +608,84 @@ def _extract_html_scripts(html_source: str) -> list[tuple[str, int]]:
     return results
 
 
+def _extract_js_class_variables(class_body: str) -> list[dict]:
+    """Extract variables/properties from a JS/TS class body.
+
+    Handles:
+      - ``this.propName = ...`` assignments in constructor
+      - TypeScript class fields: ``propName: Type``
+      - TypeScript constructor parameter properties: ``constructor(public name: Type)``
+    Returns a de-duplicated list of ``{"name": ..., "type": ...}`` dicts.
+    """
+    seen: dict[str, str] = {}  # name → type
+
+    # TypeScript class-level fields:  propName: Type
+    for m in _TS_CLASS_FIELD_PAT.finditer(class_body):
+        name = m.group(1)
+        ts_type = m.group(2).strip()
+        if name not in ("constructor", "static", "get", "set", "async"):
+            seen[name] = ts_type
+
+    # Find the constructor body and extract this.x = ... assignments
+    ctor_match = re.search(
+        r"\bconstructor\s*\(([^)]*)\)[^{]*\{", class_body
+    )
+    if ctor_match:
+        # Extract TS constructor parameter properties
+        ctor_params = ctor_match.group(1)
+        for m in _TS_CTOR_PARAM_PAT.finditer(ctor_params):
+            name = m.group(1)
+            ts_type = m.group(2).strip()
+            seen[name] = ts_type
+
+        # Find constructor body
+        ctor_open = class_body.find("{", ctor_match.start())
+        if ctor_open != -1:
+            ctor_close = _find_closing_brace_pos(class_body, ctor_open)
+            ctor_body = class_body[ctor_open + 1 : ctor_close - 1]
+            for m in _JS_THIS_ASSIGN_PAT.finditer(ctor_body):
+                name = m.group(1)
+                if name not in seen:
+                    seen[name] = "any"
+
+    return [{"name": n, "type": t} for n, t in seen.items()]
+
+
+# Regex to parse a single TS parameter:  name: Type  or  name?: Type
+_TS_PARAM_PAT = re.compile(
+    r"(\w+)\s*\??\s*:\s*([\w\[\]<>,\s|&]+?)(?:\s*[,)=]|$)"
+)
+
+
+def _extract_js_method_variables(params_str: str) -> list[dict]:
+    """Extract parameter names and types from a JS/TS method signature."""
+    seen: dict[str, str] = {}
+    params_str = params_str.strip()
+    if not params_str:
+        return []
+
+    # Try TypeScript typed params first
+    for m in _TS_PARAM_PAT.finditer(params_str):
+        name = m.group(1)
+        ts_type = m.group(2).strip()
+        seen[name] = ts_type
+
+    # If no typed params found, extract plain JS param names
+    if not seen:
+        for part in params_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            # Handle destructuring / rest / defaults
+            part = re.sub(r"\s*=\s*.*$", "", part)  # remove defaults
+            m = re.match(r"\.{3}(\w+)|(\w+)", part)
+            if m:
+                name = m.group(1) or m.group(2)
+                seen[name] = "any"
+
+    return [{"name": n, "type": t} for n, t in seen.items()]
+
+
 class _JSClassCollector:
     """Regex-based first-pass collector for JS/TS files.
 
@@ -488,6 +723,9 @@ class _JSClassCollector:
             for mm in _JS_METHOD_PAT.finditer(class_body):
                 methods.append(mm.group(1))
 
+            # Extract variables / properties
+            variables = _extract_js_class_variables(class_body)
+
             nid = _make_id(self.file_path, class_name)
             cls_node = Node(
                 id=nid,
@@ -498,6 +736,7 @@ class _JSClassCollector:
                 line_start=line_start,
                 line_end=line_end,
                 methods=methods,
+                variables=variables,
                 bases=[base_name] if base_name else [],
             )
             self.classes[class_name] = cls_node
@@ -506,6 +745,7 @@ class _JSClassCollector:
             # Create method nodes
             for mm in _JS_METHOD_PAT.finditer(class_body):
                 method_name = mm.group(1)
+                method_params = mm.group(2)
                 method_line = line_start + class_body[: mm.start()].count("\n") + 1
                 fn_qname = f"{self.module_qname}.{class_name}.{method_name}"
                 fn_id = _make_id(self.file_path, f"{class_name}.{method_name}")
@@ -517,6 +757,7 @@ class _JSClassCollector:
                     file_path=self.file_path,
                     line_start=method_line,
                     line_end=method_line,
+                    variables=_extract_js_method_variables(method_params),
                 )
                 self.functions[fn_qname] = fn_node
 

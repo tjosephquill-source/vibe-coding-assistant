@@ -318,14 +318,17 @@
     color:#b8a878; font-size:11px;
     font-family:'Share Tech Mono','SF Mono',monospace;
     line-height:1.5; width:100%; height:100%; padding:0 8px 8px;
+    overflow-y:auto;
+    scrollbar-width:none;          /* Firefox */
   }
+  .node-methods-box::-webkit-scrollbar { display:none; }  /* Chrome/Safari */
   .node-methods-label {
     color:#8c8460; font-family:'Rajdhani',sans-serif;
     font-size:10px; font-weight:600; text-transform:uppercase;
     letter-spacing:1px; margin-bottom:4px; padding-top:4px;
     border-top:1px solid rgba(180,160,120,.2);
   }
-  .node-methods-scroll { max-height:82px; overflow-y:auto; padding-right:4px; }
+  .node-methods-scroll { padding-right:4px; }
   .node-methods-scroll div { white-space:nowrap; }
 
   /* ── Detail / Inspector panel ────────────────────────────── */
@@ -365,6 +368,17 @@
     font-family:'Share Tech Mono',monospace;
   }
   #detail-panel .methods-list li::before { content:"› "; color:var(--accent); font-weight:bold; }
+  .var-type { color:#6dbd4a; opacity:0.7; font-style:italic; }
+  .node-vars-label {
+    color:#8c8460; font-family:'Rajdhani',sans-serif;
+    font-size:10px; font-weight:600; text-transform:uppercase;
+    letter-spacing:1px; margin-bottom:2px; margin-top:4px;
+    padding-top:4px;
+    border-top:1px solid rgba(180,160,120,.2);
+  }
+  .node-vars-scroll { padding-right:4px; }
+  .node-vars-scroll div { white-space:nowrap; }
+  .node-vars-scroll .nv-type { color:#6dbd4a; opacity:0.65; }
   #detail-panel .docstring {
     font-size:12px; color:var(--text-muted); font-style:italic;
     white-space:pre-wrap; font-family:'Share Tech Mono',monospace;
@@ -2510,8 +2524,8 @@ async function _loadPositionsFromDisk(nodeData) {
 }
 
 const NODE_SIZE = {
-  class: { w: 240, h: 158 },
-  method: { w: 190, h: 70 },
+  class: { w: 300, h: 210 },
+  method: { w: 210, h: 150 },
   metaclass: { w: 300, h: 210 },
   test_group:      { w: 240, h: 160 },
   model_group:     { w: 240, h: 160 },
@@ -2522,7 +2536,7 @@ const NODE_SIZE = {
   event_group:     { w: 240, h: 160 },
 };
 const NODE_CHARGE = {
-  class: -950, method: -420, metaclass: -1300,
+  class: -1300, method: -650, metaclass: -1300,
   test_group: -700, model_group: -700, config_group: -700,
   handler_group: -700, utility_group: -700,
   exception_group: -700, event_group: -700,
@@ -2623,6 +2637,9 @@ let _pendingEnsureTimeouts = [];
 // ── Cleanup helper for detail view state ───────────────────────────
 function cleanupDetailView() {
 
+  // Stop all auto-scroll animations
+  _autoScrollAnimations.forEach(function(anim, key) { _stopAutoScroll(key); });
+
   // Cancel any pending init/ensure timeouts from previous render
   if (_pendingDetailTimeout != null) {
     clearTimeout(_pendingDetailTimeout);
@@ -2687,6 +2704,95 @@ async function loadGraph() {
 }
 
 function _nid(v) { return typeof v === "object" ? v.id : v; }
+
+// ── Node auto-scroll on hover ─────────────────────────────────────
+var _autoScrollAnimations = new Map(); // nodeId → { raf, el, ... }
+var _mouseX = 0, _mouseY = 0;
+document.addEventListener("mousemove", function(e) { _mouseX = e.clientX; _mouseY = e.clientY; }, true);
+
+function _isMouseOverElement(el) {
+  // Check the foreignObject or the node-group's first rect
+  var rect = el.getBoundingClientRect();
+  if (!rect || rect.width === 0) return false;
+  return _mouseX >= rect.left && _mouseX <= rect.right && _mouseY >= rect.top && _mouseY <= rect.bottom;
+}
+
+function _startAutoScroll(nodeGroup, nodeId) {
+  var existing = _autoScrollAnimations.get(nodeId);
+  if (existing) {
+    // Cancel any pending deferred stop (mouse moved back onto element)
+    if (existing.stopTimeout) { clearTimeout(existing.stopTimeout); existing.stopTimeout = null; }
+    return; // already running
+  }
+
+  var fo = nodeGroup.querySelector && nodeGroup.querySelector(".node-methods-fo");
+  if (!fo) return;
+  var box = fo.querySelector(".node-methods-box");
+  if (!box) return;
+  if (box.scrollHeight - box.clientHeight <= 2) return; // nothing to scroll
+
+  var speed = 0.5;
+  var direction = 1;     // 1 = down, -1 = up
+  var pauseFrames = 0;
+  var PAUSE_DURATION = 50;
+  var alive = true;
+
+  function tick() {
+    if (!alive) return;
+
+    var maxScroll = box.scrollHeight - box.clientHeight;
+    if (maxScroll <= 0) {
+      _autoScrollAnimations.get(nodeId).raf = requestAnimationFrame(tick);
+      return;
+    }
+
+    if (pauseFrames > 0) {
+      pauseFrames--;
+    } else {
+      box.scrollTop += speed * direction;
+      if (direction === 1 && box.scrollTop >= maxScroll) {
+        box.scrollTop = maxScroll;
+        direction = -1;
+        pauseFrames = PAUSE_DURATION;
+      } else if (direction === -1 && box.scrollTop <= 0) {
+        box.scrollTop = 0;
+        direction = 1;
+        pauseFrames = PAUSE_DURATION;
+      }
+    }
+    _autoScrollAnimations.get(nodeId).raf = requestAnimationFrame(tick);
+  }
+
+  // Delay start to avoid triggering on quick pass-throughs
+  var startTimeout = setTimeout(function() {
+    var entry = _autoScrollAnimations.get(nodeId);
+    if (!entry || !alive) return;
+    entry.raf = requestAnimationFrame(tick);
+  }, 350);
+  _autoScrollAnimations.set(nodeId, { raf: null, el: box, timeout: startTimeout, stopTimeout: null, kill: function() { alive = false; } });
+}
+
+function _stopAutoScroll(nodeId) {
+  var anim = _autoScrollAnimations.get(nodeId);
+  if (!anim) return;
+  if (anim.timeout) clearTimeout(anim.timeout);
+  if (anim.stopTimeout) clearTimeout(anim.stopTimeout);
+  if (anim.kill) anim.kill();
+  if (anim.raf) cancelAnimationFrame(anim.raf);
+  if (anim.el) anim.el.scrollTop = 0;
+  _autoScrollAnimations.delete(nodeId);
+}
+
+function _deferStopAutoScroll(nodeId) {
+  var anim = _autoScrollAnimations.get(nodeId);
+  if (!anim) return;
+  // Short delay so that if the mouse re-enters a child element, _startAutoScroll
+  // can cancel this pending stop before it fires.
+  if (anim.stopTimeout) clearTimeout(anim.stopTimeout);
+  anim.stopTimeout = setTimeout(function() {
+    _stopAutoScroll(nodeId);
+  }, 150);
+}
 
 function updateBackButton() {
   const backBtn = document.getElementById("back-btn");
@@ -3039,7 +3145,7 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
   else { svg.call(zoomBehavior.transform, t); }
 }
 
-function snapNodesToGrid(nodeData, svg, g, node, link) {
+function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
   if (!nodeData || nodeData.length === 0) return;
 
   // Adaptive grid gaps: shrink for large node counts so the grid fits
@@ -3253,10 +3359,50 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   // Add clickable/hoverable node hit-layer in detail view (bottom): hover highlights, click drills
   const hitLayer = zoomG.append("g").attr("class", "detail-hit-layer");
 
-  hitLayer.selectAll("g")
+  const SCROLLABLE_KINDS = ["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+  const HEADER_H = 38; // height of the title+kind header area above the scrollable content
+
+  const hitGroups = hitLayer.selectAll("g")
     .data(nodeData || [])
     .join("g")
-    .attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`)
+    .attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+
+  // For nodes with scrollable content: header-only hit rect (top 38px)
+  // Build a map of node-id → cloned .node-group DOM element for auto-scroll
+  const _detailNodeEls = {};
+  zoomG.selectAll(".node-group").each(function() {
+    const nid = d3.select(this).attr("data-node-id");
+    if (nid) _detailNodeEls[nid] = this;
+  });
+
+  hitGroups.filter(d => SCROLLABLE_KINDS.includes(d.kind))
+    .append("rect")
+    .attr("x", d => -(NODE_SIZE[d.kind]?.w || 160) / 2)
+    .attr("y", d => -(NODE_SIZE[d.kind]?.h || 60) / 2)
+    .attr("width", d => NODE_SIZE[d.kind]?.w || 160)
+    .attr("height", HEADER_H)
+    .attr("fill", "transparent")
+    .style("pointer-events", "all")
+    .style("cursor", "pointer")
+    .on("mouseenter", function(event, d) {
+      event.stopPropagation();
+      highlightConnected(d);
+      if (_detailNodeEls[d.id]) _startAutoScroll(_detailNodeEls[d.id], "detail_" + d.id);
+    })
+    .on("mouseleave", function(event, d) {
+      clearHighlight();
+      _deferStopAutoScroll("detail_" + d.id);
+    })
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      drillIntoNode(d);
+    })
+    .on("contextmenu", function(event, d) {
+      showNodeContextMenu(event, d);
+    });
+
+  // For simple nodes (method, etc.): full-size hit rect
+  hitGroups.filter(d => !SCROLLABLE_KINDS.includes(d.kind))
     .append("rect")
     .attr("x", d => -(NODE_SIZE[d.kind]?.w || 160) / 2)
     .attr("y", d => -(NODE_SIZE[d.kind]?.h || 60) / 2)
@@ -3279,6 +3425,22 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
     .on("contextmenu", function(event, d) {
       showNodeContextMenu(event, d);
     });
+
+  // Wire up events on cloned foreignObjects so scrollable body area is also interactive
+  const nodeDataById = {};
+  (nodeData || []).forEach(function(n) { nodeDataById[n.id] = n; });
+  zoomG.selectAll(".node-group").each(function() {
+    const el = d3.select(this);
+    const nid = el.attr("data-node-id");
+    const nd = nodeDataById[nid];
+    if (!nd) return;
+    const groupEl = this;
+    el.selectAll(".node-methods-fo")
+      .on("mouseenter", function(event) { event.stopPropagation(); highlightConnected(nd); _startAutoScroll(groupEl, "detail_" + nd.id); })
+      .on("mouseleave", function(event) { clearHighlight(); _deferStopAutoScroll("detail_" + nd.id); })
+      .on("click", function(event) { event.stopPropagation(); drillIntoNode(nd); })
+      .on("contextmenu", function(event) { showNodeContextMenu(event, nd); });
+  });
 
   // Add the viewport indicator rect to the overview SVG (on top of everything)
   _viewportRect = overviewSvg.append("rect").attr("class", "viewport-rect");
@@ -3465,8 +3627,8 @@ function renderGraph() {
     .data(nodeData).join("g")
     .attr("class", "node-group")
     .attr("data-node-id", d => d.id)
-    .on("mouseenter", function(event, d) { event.stopPropagation(); highlightConnected(d); })
-    .on("mouseleave", function() { clearHighlight(); })
+    .on("mouseenter", function(event, d) { event.stopPropagation(); highlightConnected(d); _startAutoScroll(this, d.id); })
+    .on("mouseleave", function(event, d) { clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click", function(event, d) {
       event.stopPropagation();
       centerDetailOnGraphPoint(d.x, d.y, true);
@@ -3489,8 +3651,22 @@ function renderGraph() {
     .append("foreignObject").attr("class","node-methods-fo")
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
-    .html(d=>{const methods=(d.methods||[]).map(m=>`<div>${m}()</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Methods (${(d.methods||[]).length})</div><div class="node-methods-scroll">${methods||"<div>(none)</div>"}</div></div>`;});
-  classFo.on("click",function(event,d){
+    .html(d=>{const vars=(d.variables||[]).map(v=>`<div>${v.name}<span class="nv-type">: ${v.type}</span></div>`).join("");const methods=(d.methods||[]).map(m=>`<div>${m}()</div>`).join("");let inner="";if(vars){inner+=`<div class="node-vars-label">Variables (${(d.variables||[]).length})</div><div class="node-vars-scroll">${vars}</div>`;}inner+=`<div class="node-methods-label">Methods (${(d.methods||[]).length})</div><div class="node-methods-scroll">${methods||"<div>(none)</div>"}</div>`;return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">${inner}</div>`;});
+  classFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
+    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("click",function(event,d){
+    event.stopPropagation();
+    centerDetailOnGraphPoint(d.x, d.y, true);
+  }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
+
+  const methodFo = node.filter(d => d.kind === "method" && d.variables && d.variables.length > 0)
+    .append("foreignObject").attr("class","node-methods-fo")
+    .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
+    .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
+    .html(d=>{const vars=(d.variables||[]).map(v=>`<div>${v.name}<span class="nv-type">: ${v.type}</span></div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-vars-label">Variables (${(d.variables||[]).length})</div><div class="node-vars-scroll">${vars}</div></div>`;});
+  methodFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
+    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
   }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
@@ -3500,7 +3676,9 @@ function renderGraph() {
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
     .html(d=>{const members=(d.members||[]).map(m=>`<div>${m}</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Classes (${(d.members||[]).length})</div><div class="node-methods-scroll">${members||"<div>(none)</div>"}</div></div>`;});
-  metaFo.on("click",function(event,d){
+  metaFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
+    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
   }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
@@ -3511,7 +3689,9 @@ function renderGraph() {
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
     .html(d=>{const members=(d.members||[]).map(m=>`<div>${m}</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Members (${(d.members||[]).length})</div><div class="node-methods-scroll">${members||"<div>(none)</div>"}</div></div>`;});
-  groupFo.on("click",function(event,d){
+  groupFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
+    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
   }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
@@ -3678,7 +3858,7 @@ function renderGraph() {
         });
       }
 
-      snapNodesToGrid(nodeData, svg, g, node, link);
+      snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel);
       // Final safety check after grid snap animation
       var eid2 = setTimeout(function() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
@@ -3861,6 +4041,7 @@ function selectNode(d) {
   let html = `<h2>${d.name}</h2><div class="kind-tag ${d.kind}">${d.kind}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
   if (d.docstring) { html += `<div class="detail-section"><h3>Description</h3><div class="docstring">${d.docstring}</div></div>`; }
   if (d.bases && d.bases.length > 0) { html += `<div class="detail-section"><h3>Inherits from</h3><div class="detail-row">${d.bases.join(", ")}</div></div>`; }
+  if (d.variables && d.variables.length > 0) { html += `<div class="detail-section"><h3>Variables (${d.variables.length})</h3><ul class="methods-list">${d.variables.map(v => `<li>${v.name}<span class="var-type">: ${v.type}</span></li>`).join("")}</ul></div>`; }
   if (d.methods && d.methods.length > 0) { html += `<div class="detail-section"><h3>Methods (${d.methods.length})</h3><ul class="methods-list">${d.methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (d.members && d.members.length > 0) { html += `<div class="detail-section"><h3>Grouped Classes (${d.members.length})</h3><ul class="methods-list">${d.members.map(m => `<li>${m}</li>`).join("")}</ul></div>`; }
   if (outgoing.length > 0) { html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div><span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> → ${findNodeName(e.target)}</li>`).join("")}</ul></div>`; }
@@ -3884,6 +4065,7 @@ function populatePanel(d) {
   let html = `<h2>${d.name}</h2><div class="kind-tag ${d.kind}">${d.kind}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
   if (d.docstring) { html += `<div class="detail-section"><h3>Description</h3><div class="docstring">${d.docstring}</div></div>`; }
   if (d.bases && d.bases.length > 0) { html += `<div class="detail-section"><h3>Inherits from</h3><div class="detail-row">${d.bases.join(", ")}</div></div>`; }
+  if (d.variables && d.variables.length > 0) { html += `<div class="detail-section"><h3>Variables (${d.variables.length})</h3><ul class="methods-list">${d.variables.map(v => `<li>${v.name}<span class="var-type">: ${v.type}</span></li>`).join("")}</ul></div>`; }
   if (d.methods && d.methods.length > 0) { html += `<div class="detail-section"><h3>Methods (${d.methods.length})</h3><ul class="methods-list">${d.methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (d.members && d.members.length > 0) { html += `<div class="detail-section"><h3>Grouped Classes (${d.members.length})</h3><ul class="methods-list">${d.members.map(m => `<li>${m}</li>`).join("")}</ul></div>`; }
   if (outgoing.length > 0) { html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div><span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> → ${findNodeName(e.target)}</li>`).join("")}</ul></div>`; }
@@ -3953,6 +4135,7 @@ function highlightConnected(d) {
 function clearHighlight() {
 
   if (!window._nodes || !window._links) return;
+
 
   // ── Overview panel (top) ──────────────────────────────────────
   window._nodes.selectAll(".node-rect").style("filter", null).style("opacity", 1);
