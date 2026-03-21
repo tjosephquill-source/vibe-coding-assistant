@@ -977,7 +977,7 @@
   }
   .label-mode-badge text {
     fill:#1a1e14; font-family:'Share Tech Mono',monospace;
-    font-size:16px; font-weight:700; text-anchor:middle;
+    font-size:18px; font-weight:700; text-anchor:middle;
     dominant-baseline:central; pointer-events:none;
   }
   .label-mode-badge.dimmed rect { fill:#e8c54744; }
@@ -4993,17 +4993,28 @@ function _enterLabelMode() {
     _labelMap.set(labels[i], nodes[i]);
   }
 
+  // Compute counter-scale so badges stay a fixed screen size
+  var svg = d3.select("#graph-svg");
+  var currentK = 1;
+  if (!svg.empty()) {
+    var zt = d3.zoomTransform(svg.node());
+    if (zt && zt.k) currentK = zt.k;
+  }
+  var invK = 1 / currentK;
+
   // Draw badges
   _labelOverlayGroup = gEl.append("g").attr("class", "label-mode-overlay");
   _labelOverlayGroup.selectAll("g.label-mode-badge")
     .data(labels.map(function(l, idx) { return { label: l, node: nodes[idx] }; }))
     .join("g")
     .attr("class", "label-mode-badge")
-    .attr("transform", function(d) { return "translate(" + d.node.x + "," + d.node.y + ")"; })
+    .attr("transform", function(d) {
+      return "translate(" + d.node.x + "," + d.node.y + ") scale(" + invK + ")";
+    })
     .each(function(d) {
       var g = d3.select(this);
-      var padX = 6, padY = 4;
-      var charW = 12, charH = 18;
+      var padX = 8, padY = 5;
+      var charW = 14, charH = 22;
       var w = d.label.length * charW + padX * 2;
       var h = charH + padY * 2;
       g.append("rect")
