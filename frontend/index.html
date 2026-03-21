@@ -336,7 +336,7 @@
   }
 
   /* ── Edges ───────────────────────────────────────────────── */
-  .edge { fill:none; stroke-width:1.5; opacity:.6; }
+  .edge { fill:none, stroke-width:1.5, opacity:.6, }
   .edge.inherits     { stroke:#d44a32; }
   .edge.imports      { stroke:#5a6348; stroke-dasharray:8,4; }
   .edge.contains     { stroke:#3d4a2e; stroke-dasharray:3,3; }
@@ -934,6 +934,66 @@
     padding:14px; text-align:center; color:var(--text-muted); font-size:11px;
     text-transform:uppercase; letter-spacing:1px;
   }
+
+  /* ── Shortcuts panel ─────────────────────────────────────── */
+  #shortcuts-panel {
+    background:var(--surface); padding:16px 20px; font-size:12px;
+    overflow-y:auto; width:100%; height:100%;
+  }
+  .shortcut-section {
+    margin-bottom:14px;
+  }
+  .shortcut-section-title {
+    font-size:10px; font-weight:700; text-transform:uppercase;
+    letter-spacing:2px; color:var(--khaki); margin-bottom:6px;
+    padding-bottom:4px; border-bottom:1px solid var(--border);
+  }
+  .shortcut-row {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:4px 0; font-size:12px; color:var(--text);
+  }
+  .shortcut-row:hover { color:var(--accent); }
+  .shortcut-label {
+    font-weight:500; letter-spacing:.3px;
+  }
+  .shortcut-keys {
+    display:flex; align-items:center; gap:3px; flex-shrink:0;
+  }
+  .shortcut-keys kbd {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:22px; height:20px; padding:0 6px;
+    background:var(--bg); border:1px solid var(--border-hi);
+    border-bottom:2px solid var(--border-hi);
+    border-radius:3px; font-family:'Share Tech Mono',monospace;
+    font-size:11px; color:var(--text); line-height:1;
+  }
+  .shortcut-keys .key-plus {
+    font-size:10px; color:var(--text-muted); padding:0 1px;
+  }
+
+  /* ── Label-mode (go-to-node) badges ─────────────────────── */
+  .label-mode-badge rect {
+    fill:#e8c547; rx:4; ry:4;
+  }
+  .label-mode-badge text {
+    fill:#1a1e14; font-family:'Share Tech Mono',monospace;
+    font-size:16px; font-weight:700; text-anchor:middle;
+    dominant-baseline:central; pointer-events:none;
+  }
+  .label-mode-badge.dimmed rect { fill:#e8c54744; }
+  .label-mode-badge.dimmed text { fill:#1a1e1466; }
+  .label-mode-toast {
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    background:#e8c547; color:#1a1e14; font-family:'Share Tech Mono',monospace;
+    font-size:13px; font-weight:700; padding:6px 18px; border-radius:6px;
+    z-index:99999; pointer-events:none; letter-spacing:1px;
+    box-shadow:0 2px 12px rgba(0,0,0,.4);
+    animation: labelToastIn .15s ease-out;
+  }
+  @keyframes labelToastIn {
+    from { opacity:0; transform:translateX(-50%) translateY(8px); }
+    to   { opacity:1; transform:translateX(-50%) translateY(0); }
+  }
 </style>
 </head>
 <body>
@@ -996,6 +1056,7 @@
   <div class="ctx-item" id="ctx-summary"><span class="ctx-icon">🤖</span>Summary</div>
   <div class="ctx-item" id="ctx-query"><span class="ctx-icon">💬</span>Query</div>
 </div>
+
 
 
 <script>
@@ -3334,41 +3395,21 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
   const count = nodeData.length;
   const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
   const rowGap = count > 20 ? 260 : count > 12 ? 310 : GRID_SNAP_ROW_GAP;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(nodeData.length * 1.4)));
+  const rows = Math.ceil(nodeData.length / cols);
+  const totalW = (cols - 1) * colGap;
+  const totalH = (rows - 1) * rowGap;
+  const centerX = width / 2;
+  const centerY = height / 2;
 
-  let minX = Infinity, minY = Infinity;
-  nodeData.forEach(n => { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; });
-  const sorted = [...nodeData].sort((a, b) =>
-    Math.round((a.y - minY) / rowGap) - Math.round((b.y - minY) / rowGap) ||
-    Math.round((a.x - minX) / colGap) - Math.round((b.x - minX) / colGap)
-  );
-  const totalCols = Math.max(1, Math.ceil(Math.sqrt(nodeData.length * 1.4)));
-  const usedCells = new Set(); const cellOf = new Map();
-  sorted.forEach(n => {
-    let col = Math.max(0, Math.round((n.x - minX) / colGap));
-    let row = Math.max(0, Math.round((n.y - minY) / rowGap));
-    let found = false;
-    for (let radius = 0; radius < totalCols * 2 && !found; radius++) {
-      for (let dc = -radius; dc <= radius && !found; dc++) {
-        for (let dr = -radius; dr <= radius && !found; dr++) {
-          if (Math.abs(dc) !== radius && Math.abs(dr) !== radius) continue;
-          const c = Math.max(0, col + dc); const r = Math.max(0, row + dr);
-          const key = `${c},${r}`;
-          if (!usedCells.has(key)) { usedCells.add(key); cellOf.set(n.id, { col: c, row: r }); found = true; }
-        }
-      }
-    }
-  });
-  let cx = 0, cy = 0;
-  nodeData.forEach(n => { cx += n.x; cy += n.y; }); cx /= nodeData.length; cy /= nodeData.length;
-  const maxCol = Math.max(...[...cellOf.values()].map(c => c.col));
-  const maxRow = Math.max(...[...cellOf.values()].map(c => c.row));
-  const gridOriginX = cx - (maxCol * colGap) / 2;
-  const gridOriginY = cy - (maxRow * rowGap) / 2;
+  // Snap each node to its grid cell, centered
   nodeData.forEach(n => {
-    const cell = cellOf.get(n.id); if (!cell) return;
-    n.x = gridOriginX + cell.col * colGap;
-    n.y = gridOriginY + cell.row * rowGap;
-    n.fx = null; n.fy = null;
+    const col = Math.round((n.x - centerX + totalW / 2) / colGap);
+    const row = Math.round((n.y - centerY + totalH / 2) / rowGap);
+    n.x = centerX + (col * colGap - totalW / 2);
+    n.y = centerY + (row * rowGap - totalH / 2);
+    n.fx = null;
+    n.fy = null;
   });
   node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   link.attr("d", edgePath);
@@ -3376,11 +3417,11 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
   // Fit immediately (no animation) then animate a refined fit
   const container = document.getElementById("graph-container");
   if (!container) return;
-  fitGraphToViewport(svg, window._zoomBehavior, nodeData, container.clientWidth, container.clientHeight, 20, false);
+  fitGraphToViewport(svg, zoomBehavior, nodeData, container.clientWidth, container.clientHeight, 20, false);
   setTimeout(function() {
     const c = document.getElementById("graph-container");
     if (!c) return;
-    fitGraphToViewport(svg, window._zoomBehavior, nodeData, c.clientWidth, c.clientHeight, 20, true);
+    fitGraphToViewport(svg, zoomBehavior, nodeData, c.clientWidth, c.clientHeight, 20, true);
   }, 50);
 }
 
@@ -3509,30 +3550,25 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   const currentOverview = d3.zoomTransform(overviewSvg.node());
   _overviewTransform = currentOverview;
 
-  // Focus on the most-connected node by default
+  // Default: fit all nodes in view (zoomed out, same as Overview)
   if (nodeData && nodeData.length > 0) {
-    const degree = new Map(nodeData.map(n => [n.id, 0]));
-    (window._linkData || []).forEach(e => {
-      const s = _nid(e.source);
-      const t = _nid(e.target);
-      if (degree.has(s)) degree.set(s, degree.get(s) + 1);
-      if (degree.has(t)) degree.set(t, degree.get(t) + 1);
-    });
-
-    let focusNode = nodeData[0];
-    let maxDeg = degree.get(focusNode.id) || 0;
+    let dMinX = Infinity, dMinY = Infinity, dMaxX = -Infinity, dMaxY = -Infinity;
     nodeData.forEach(n => {
-      const d = degree.get(n.id) || 0;
-      if (d > maxDeg) { maxDeg = d; focusNode = n; }
+      const s = NODE_SIZE[n.kind] || { w: 160, h: 60 };
+      const x1 = n.x - s.w / 2, x2 = n.x + s.w / 2;
+      const y1 = n.y - s.h / 2, y2 = n.y + s.h / 2;
+      if (x1 < dMinX) dMinX = x1; if (y1 < dMinY) dMinY = y1;
+      if (x2 > dMaxX) dMaxX = x2; if (y2 > dMaxY) dMaxY = y2;
     });
-
-    const gcx = focusNode.x;
-    const gcy = focusNode.y;
-
-    const detailScale = currentOverview.k * DETAIL_ZOOM_SCALE;
-    const dtx = zw / 2 - gcx * detailScale;
-    const dty = zh / 2 - gcy * detailScale;
-    const initTransform = d3.zoomIdentity.translate(dtx, dty).scale(detailScale);
+    const dGraphW = Math.max(1, dMaxX - dMinX);
+    const dGraphH = Math.max(1, dMaxY - dMinY);
+    const dPad = 40;
+    const dAvailW = Math.max(1, zw - dPad * 2);
+    const dAvailH = Math.max(1, zh - dPad * 2);
+    const dScale = Math.min(dAvailW / dGraphW, dAvailH / dGraphH);
+    const dtx = (zw - dGraphW * dScale) / 2 - dMinX * dScale;
+    const dty = (zh - dGraphH * dScale) / 2 - dMinY * dScale;
+    const initTransform = d3.zoomIdentity.translate(dtx, dty).scale(dScale);
 
     zoomSvg.call(_zoomDetailBehavior.transform, initTransform);
     _zoomDetailTransform = initTransform;
@@ -3566,20 +3602,20 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
     .attr("fill", "transparent")
     .style("pointer-events", "all")
     .style("cursor", "pointer")
-    .on("mouseenter", function(event, d) {
+    .on("mouseenter", function(event,d) {
       event.stopPropagation();
       highlightConnected(d);
       if (_detailNodeEls[d.id]) _startAutoScroll(_detailNodeEls[d.id], "detail_" + d.id);
     })
-    .on("mouseleave", function(event, d) {
+    .on("mouseleave", function(event,d) {
       clearHighlight();
       _deferStopAutoScroll("detail_" + d.id);
     })
-    .on("click", function(event, d) {
+    .on("click", function(event,d) {
       event.stopPropagation();
       drillIntoNode(d);
     })
-    .on("contextmenu", function(event, d) {
+    .on("contextmenu", function(event,d) {
       showNodeContextMenu(event, d);
     });
 
@@ -4220,7 +4256,7 @@ function selectNode(d) {
   if (!content) return;
   const incoming = graphData.edges.filter(e => (_nid(e.target) === d.id));
   const outgoing = graphData.edges.filter(e => (_nid(e.source) === d.id));
-  const findNodeName = function(id) { const realId = typeof id === "object" ? id.id : id; const n = graphData.nodes.find(n => n.id === realId); return n ? n.name : realId; };
+  const findNodeName = function(id) { const n = graphData.nodes.find(n => n.id === _nid(id)); return n ? n.name : _nid(id); };
   const edgeColor = { inherits: "#d44a32", imports: "#5a6348", contains: "#3d4a2e", calls: "#e8a824", instantiates: "#b8a878", uses_type: "#6dbd4a" };
 
   let html = `<h2>${d.name}</h2><div class="kind-tag ${d.kind}">${d.kind}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
@@ -4779,11 +4815,299 @@ document.getElementById('np-path').addEventListener('keydown', function (e) {
 });
 
 // ── App boot ───────────────────────────────────────────────────────
-
 function _bootApp() {
   loadGraph();
   loadDirectoryTree();
 }
+
+// ── Shortcuts panel ────────────────────────────────────────────────
+
+function _renderShortcutsPanel(container) {
+  container.id = 'shortcuts-panel';
+  var html = '';
+
+  html += '<div class="shortcut-section">' +
+    '<div class="shortcut-section-title">Navigation</div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Focus search</span><span class="shortcut-keys"><kbd>/</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Close modal / menu</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>' +
+  '</div>';
+
+  html += '<div class="shortcut-section">' +
+    '<div class="shortcut-section-title">Search Results</div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Navigate results</span><span class="shortcut-keys"><kbd>↑</kbd> <kbd>↓</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Select result</span><span class="shortcut-keys"><kbd>Enter</kbd></span></div>' +
+  '</div>';
+
+  html += '<div class="shortcut-section">' +
+    '<div class="shortcut-section-title">Graph</div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Select node</span><span class="shortcut-keys"><kbd>Click</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Context menu</span><span class="shortcut-keys"><kbd>Right‑click</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Pan &amp; zoom</span><span class="shortcut-keys"><kbd>Drag</kbd> <kbd>Scroll</kbd></span></div>' +
+  '</div>';
+
+  html += '<div class="shortcut-section">' +
+    '<div class="shortcut-section-title">Chat</div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Send message</span><span class="shortcut-keys"><kbd>Enter</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">New line</span><span class="shortcut-keys"><kbd>Shift</kbd><span class="key-plus">+</span><kbd>Enter</kbd></span></div>' +
+  '</div>';
+
+  html += '<div class="shortcut-section">' +
+    '<div class="shortcut-section-title">Panels</div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Toggle shortcuts panel</span><span class="shortcut-keys"><kbd>?</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Fit all nodes in view</span><span class="shortcut-keys"><kbd>Space</kbd></span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Go to node (label mode)</span><span class="shortcut-keys"><kbd>G</kbd></span></div>' +
+  '</div>';
+
+  container.innerHTML = html;
+}
+
+PanelRegistry.register({
+  id: 'shortcuts',
+  title: 'Shortcuts',
+  icon: '⌨️',
+  contentId: 'shortcuts-panel',
+  closable: true,
+  floatable: true,
+  render: function (content) {
+    _renderShortcutsPanel(content);
+  },
+});
+
+// Global "?" key toggles the shortcuts panel
+document.addEventListener("keydown", function(e) {
+  var tag = (document.activeElement || {}).tagName;
+  var isTyping = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT");
+  if (e.key === "?" && !isTyping && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    var inLayout = WindowManager.layout.hasPanelInTree('shortcuts');
+    var isFloat  = WindowManager.floating.floatingPanels.has('shortcuts');
+    if (inLayout || isFloat) {
+      if (isFloat) WindowManager.floating.dockBack('shortcuts', WindowManager.layout);
+      WindowManager.closePanel('shortcuts');
+    } else {
+      WindowManager.openPanel('shortcuts');
+    }
+  }
+});
+
+// Global Space key resets the camera to fit all nodes in view
+document.addEventListener("keydown", function(e) {
+  if (e.key !== " " && e.key !== "Spacebar") return;
+  var tag = (document.activeElement || {}).tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+
+  var svg = d3.select("#graph-svg");
+  if (svg.empty() || !window._zoomBehavior || !window._nodeData || window._nodeData.length === 0) return;
+
+  var container = document.getElementById("graph-container");
+  if (!container) return;
+
+  fitGraphToViewport(svg, window._zoomBehavior, window._nodeData,
+    container.clientWidth, container.clientHeight, 20, true);
+
+  // Also fit the detail view to capture the entire graph, centered
+  if (_zoomSvg && _zoomDetailBehavior && window._nodeData.length > 0) {
+    var zoomContainer = document.getElementById("zoom-container");
+    if (zoomContainer) {
+      var zw = zoomContainer.clientWidth;
+      var zh = zoomContainer.clientHeight;
+      if (zw > 0 && zh > 0) {
+        var dMinX = Infinity, dMinY = Infinity, dMaxX = -Infinity, dMaxY = -Infinity;
+        window._nodeData.forEach(function(n) {
+          var s = NODE_SIZE[n.kind] || { w: 160, h: 60 };
+          var x1 = n.x - s.w / 2, x2 = n.x + s.w / 2;
+          var y1 = n.y - s.h / 2, y2 = n.y + s.h / 2;
+          if (x1 < dMinX) dMinX = x1; if (y1 < dMinY) dMinY = y1;
+          if (x2 > dMaxX) dMaxX = x2; if (y2 > dMaxY) dMaxY = y2;
+        });
+        var dGraphW = Math.max(1, dMaxX - dMinX);
+        var dGraphH = Math.max(1, dMaxY - dMinY);
+        var dPad = 40;
+        var dAvailW = Math.max(1, zw - dPad * 2);
+        var dAvailH = Math.max(1, zh - dPad * 2);
+        var dScale = Math.min(dAvailW / dGraphW, dAvailH / dGraphH);
+        var dtx = (zw - dGraphW * dScale) / 2 - dMinX * dScale;
+        var dty = (zh - dGraphH * dScale) / 2 - dMinY * dScale;
+        var dt = d3.zoomIdentity.translate(dtx, dty).scale(dScale);
+        _zoomSvg.transition().duration(250).call(_zoomDetailBehavior.transform, dt);
+      }
+    }
+  }
+});
+
+// ── Label mode (go-to-node) ─────────────────────────────────────────
+var _labelModeActive = false;
+var _labelMap = new Map();       // label string → node datum
+var _labelTyped = "";            // chars typed so far
+var _labelOverlayGroup = null;   // d3 selection of badge <g>
+var _labelToast = null;          // DOM element for the bottom toast
+
+var _LABEL_ALPHABET = "ASDFGHJKLQWERTYUIOPZXCVBNM";
+
+function _generateLabels(count) {
+  var chars = _LABEL_ALPHABET;
+  var labels = [];
+  if (count <= chars.length) {
+    for (var i = 0; i < count; i++) labels.push(chars[i]);
+  } else {
+    // two-character labels
+    for (var a = 0; a < chars.length && labels.length < count; a++) {
+      for (var b = 0; b < chars.length && labels.length < count; b++) {
+        labels.push(chars[a] + chars[b]);
+      }
+    }
+  }
+  return labels;
+}
+
+function _showLabelToast(text) {
+  _removeLabelToast();
+  var el = document.createElement("div");
+  el.className = "label-mode-toast";
+  el.textContent = text;
+  document.body.appendChild(el);
+  _labelToast = el;
+}
+
+function _removeLabelToast() {
+  if (_labelToast) { _labelToast.remove(); _labelToast = null; }
+}
+
+function _enterLabelMode() {
+  if (_labelModeActive) return;
+  if (!window._nodeData || window._nodeData.length === 0) return;
+  var gEl = d3.select("#graph-svg > g");
+  if (gEl.empty()) return;
+
+  _labelModeActive = true;
+  _labelTyped = "";
+  _labelMap.clear();
+
+  var nodes = window._nodeData.filter(function(n) { return n.x != null && n.y != null; });
+  if (nodes.length === 0) { _exitLabelMode(); return; }
+
+  var labels = _generateLabels(nodes.length);
+  for (var i = 0; i < nodes.length; i++) {
+    _labelMap.set(labels[i], nodes[i]);
+  }
+
+  // Draw badges
+  _labelOverlayGroup = gEl.append("g").attr("class", "label-mode-overlay");
+  _labelOverlayGroup.selectAll("g.label-mode-badge")
+    .data(labels.map(function(l, idx) { return { label: l, node: nodes[idx] }; }))
+    .join("g")
+    .attr("class", "label-mode-badge")
+    .attr("transform", function(d) { return "translate(" + d.node.x + "," + d.node.y + ")"; })
+    .each(function(d) {
+      var g = d3.select(this);
+      var padX = 6, padY = 4;
+      var charW = 12, charH = 18;
+      var w = d.label.length * charW + padX * 2;
+      var h = charH + padY * 2;
+      g.append("rect")
+        .attr("x", -w / 2).attr("y", -h / 2)
+        .attr("width", w).attr("height", h)
+        .attr("rx", 4).attr("ry", 4);
+      g.append("text")
+        .attr("x", 0).attr("y", 1)
+        .text(d.label);
+    });
+
+  _showLabelToast("GO TO NODE ▸ type a label…");
+}
+
+function _exitLabelMode() {
+  _labelModeActive = false;
+  _labelTyped = "";
+  _labelMap.clear();
+  if (_labelOverlayGroup) { _labelOverlayGroup.remove(); _labelOverlayGroup = null; }
+  _removeLabelToast();
+}
+
+function _updateLabelDimming() {
+  if (!_labelOverlayGroup) return;
+  _labelOverlayGroup.selectAll("g.label-mode-badge")
+    .classed("dimmed", function(d) {
+      return _labelTyped.length > 0 && d.label.indexOf(_labelTyped) !== 0;
+    });
+}
+
+function _zoomToNode(node) {
+  // Detail panel: zoom in close and center on the selected node
+  if (_zoomSvg && _zoomDetailBehavior) {
+    var zoomContainer = document.getElementById("zoom-container");
+    if (zoomContainer) {
+      var zw = zoomContainer.clientWidth;
+      var zh = zoomContainer.clientHeight;
+      var s = NODE_SIZE[node.kind] || { w: 160, h: 60 };
+      // Scale so the node fills roughly 80% of the panel (close-up)
+      var scaleW = (zw * 0.8) / s.w;
+      var scaleH = (zh * 0.8) / s.h;
+      var closeScale = Math.min(scaleW, scaleH, 6.0); // cap at 6× to avoid extreme zoom
+      closeScale = Math.max(closeScale, 0.5);          // floor to stay readable
+      var dtx = zw / 2 - node.x * closeScale;
+      var dty = zh / 2 - node.y * closeScale;
+      var t = d3.zoomIdentity.translate(dtx, dty).scale(closeScale);
+      _zoomSvg.transition().duration(300).call(_zoomDetailBehavior.transform, t);
+    }
+  }
+
+  // Highlight + inspect
+  highlightConnected(node);
+  _inspectorPinned = true;
+  populatePanel(node);
+}
+
+// Key handler for label mode
+document.addEventListener("keydown", function(e) {
+  var tag = (document.activeElement || {}).tagName;
+  var isTyping = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT");
+
+  // "G" enters label mode (only when not typing and mode is not active)
+  if (!_labelModeActive) {
+    if ((e.key === "g" || e.key === "G") && !isTyping && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      _enterLabelMode();
+    }
+    return;
+  }
+
+  // In label mode:
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (e.key === "Escape") {
+    _exitLabelMode();
+    return;
+  }
+
+  // Only accept alphabet keys
+  var ch = e.key.toUpperCase();
+  if (ch.length === 1 && _LABEL_ALPHABET.indexOf(ch) !== -1) {
+    _labelTyped += ch;
+    _showLabelToast("GO TO NODE ▸ " + _labelTyped + "…");
+    _updateLabelDimming();
+
+    // Check for exact match
+    if (_labelMap.has(_labelTyped)) {
+      var targetNode = _labelMap.get(_labelTyped);
+      _exitLabelMode();
+      _zoomToNode(targetNode);
+    } else {
+      // Check if any labels still start with what was typed
+      var anyMatch = false;
+      _labelMap.forEach(function(v, k) {
+        if (k.indexOf(_labelTyped) === 0) anyMatch = true;
+      });
+      if (!anyMatch) {
+        // No possible match — exit
+        _exitLabelMode();
+      }
+    }
+  }
+}, true);  // useCapture = true so it intercepts before other handlers
 
 WindowManager.init(document.getElementById("wm-root"));
 loadProjects(true);
