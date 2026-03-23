@@ -881,8 +881,35 @@ class _JSRelationshipCollector:
         cleaned = _strip_js_comments(source)
         class_ranges = class_ranges or {}
 
+        # Extract JSDoc type references BEFORE stripping comments
+        self._collect_jsdoc_types(source, class_ranges)
         self._collect_imports(cleaned)
         self._collect_refs(cleaned, class_ranges)
+
+    # ── JSDoc type extraction ────────────────────────────────────────
+
+    # Patterns for @type {ClassName}, @param {ClassName}, @returns {ClassName}
+    _JSDOC_TYPE_PAT = re.compile(
+        r"@(?:type|param|returns?|var|member|typedef)\s+\{([^}]+)}"
+    )
+
+    def _collect_jsdoc_types(
+        self,
+        source: str,
+        class_ranges: dict[str, tuple[int, int]],
+    ) -> None:
+        """Extract type references from JSDoc annotations."""
+        lines = source.split("\n")
+        for line_num, line in enumerate(lines, 1):
+            for m in self._JSDOC_TYPE_PAT.finditer(line):
+                type_str = m.group(1)
+                # Split on common type operators: |, &, <, >, ,
+                parts = re.split(r"[|&<>,\s]+", type_str)
+                context = self._line_context(line_num, class_ranges)
+                for part in parts:
+                    part = part.strip().rstrip("?").rstrip("[]")
+                    if part in self.known_classes:
+                        self.class_refs.append((context, part))
 
     # ── imports ──────────────────────────────────────────────────────
 
@@ -937,12 +964,24 @@ class _JSRelationshipCollector:
             for m in _JS_NEW_PAT.finditer(line):
                 self.calls.append((context, m.group(1), line_num))
 
-            # Bare references to known class names
+            # Bare references to known class names (exact case)
             for cls_name in self.known_classes:
                 if cls_name in line and re.search(
                     r"\b" + re.escape(cls_name) + r"\b", line
                 ):
                     self.class_refs.append((context, cls_name))
+
+            # Case-insensitive parameter/identifier matching:
+            # Catches patterns like constructor(layoutEngine) where
+            # LayoutEngine is a known class.  We match identifiers whose
+            # PascalCase form equals a known class name — e.g. the
+            # camelCase variant "layoutEngine" → "LayoutEngine".
+            for m in re.finditer(r"\b([a-z]\w{2,})\b", line):
+                word = m.group(1)
+                # Convert camelCase to PascalCase (capitalise first letter)
+                pascal = word[0].upper() + word[1:]
+                if pascal in self.known_classes:
+                    self.class_refs.append((context, pascal))
 
     @staticmethod
     def _line_context(
