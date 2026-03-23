@@ -554,7 +554,7 @@ async def node_description(request: Request):
 
     try:
         resp = await client.chat.completions.create(
-            model="gpt-5.4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a concise code documentation assistant. Respond with exactly 1-2 sentences describing the purpose of the given code element. No markdown, no bullet points."},
                 {"role": "user", "content": user_msg},

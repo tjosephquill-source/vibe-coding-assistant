@@ -459,6 +459,13 @@
     font-size:12px; padding:3px 0; display:flex; align-items:center; gap:6px;
     font-family:'Share Tech Mono',monospace;
   }
+  .rel-list li .rel-node-link {
+    cursor:pointer; text-decoration:none; color:var(--text);
+    transition:color .1s, text-shadow .1s;
+  }
+  .rel-list li .rel-node-link:hover {
+    color:var(--accent); text-shadow:0 0 6px var(--accent-glow);
+  }
   .rel-dot { width:8px; height:8px; flex-shrink:0; }
 
   /* ── Legend ───────────────────────────────────────────────── */
@@ -470,7 +477,10 @@
   .legend-item {
     display:flex; align-items:center; gap:8px; margin-bottom:4px;
     font-weight:500; letter-spacing:.5px; color:var(--tan);
+    cursor:pointer; user-select:none; transition:opacity .15s;
   }
+  .legend-item:hover { color:var(--text); }
+  .legend-item.inactive { opacity:0.3; text-decoration:line-through; }
   .legend-node { width:10px; height:10px; border:2px solid; }
   .legend-edge { width:24px; height:0; border-top:2px solid; }
   .legend-edge.dashed { border-top-style:dashed; }
@@ -1372,7 +1382,7 @@ function _renderCodeContent(container, path, content, lineStart, lineEnd) {
 
 function _escHtml(str) {
   var div = document.createElement('div');
-  div.appendChild(document.createTextNode(str));
+  div.appendChild(document.createTextNode(str || ''));
   return div.innerHTML;
 }
 
@@ -2802,25 +2812,77 @@ const NODE_KIND_META = {
 };
 const NODE_KIND_ORDER = ["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
 
+const EDGE_KIND_META = {
+  inherits:     { label: "Inherits",     border: "#d44a32", style: "" },
+  imports:      { label: "Imports",      border: "#5a6348", style: "dashed" },
+  contains:     { label: "Contains",     border: "#3d4a2e", style: "dotted" },
+  calls:        { label: "Calls",        border: "#e8a824", style: "" },
+  instantiates: { label: "Instantiates", border: "#b8a878", style: "dashed" },
+  uses_type:    { label: "Uses Type",    border: "#6dbd4a", style: "dashed" },
+};
+const EDGE_KIND_ORDER = ["inherits", "imports", "contains", "calls", "instantiates", "uses_type"];
+
 function updateLegend(graphData) {
   var legendEl = document.getElementById("legend");
   if (!legendEl) return;
   const presentKinds = new Set((graphData.nodes || []).map(n => n.kind));
-  let html = "<h4>Nodes</h4>";
+  legendEl.innerHTML = "";
+
+  // ── Node kind toggles ──
+  var nodeHeader = document.createElement("h4");
+  nodeHeader.textContent = "Nodes";
+  legendEl.appendChild(nodeHeader);
+
   for (const kind of NODE_KIND_ORDER) {
     if (!presentKinds.has(kind)) continue;
     const m = NODE_KIND_META[kind];
     if (!m) continue;
-    html += `<div class="legend-item"><div class="legend-node" style="border-color:${m.border}; background:${m.bg}"></div> ${m.label}</div>`;
+    var item = document.createElement("div");
+    item.className = "legend-item" + (activeNodeKinds.has(kind) ? "" : " inactive");
+    item.dataset.kind = kind;
+    item.dataset.type = "node";
+    item.innerHTML = '<div class="legend-node" style="border-color:' + m.border + '; background:' + m.bg + '"></div> ' + m.label;
+    item.addEventListener("click", function() {
+      var k = this.dataset.kind;
+      if (activeNodeKinds.has(k)) {
+        activeNodeKinds.delete(k);
+        this.classList.add("inactive");
+      } else {
+        activeNodeKinds.add(k);
+        this.classList.remove("inactive");
+      }
+      if (graphData) renderGraph();
+    });
+    legendEl.appendChild(item);
   }
-  html += `<h4 style="margin-top:10px">Edges</h4>
-  <div class="legend-item"><div class="legend-edge" style="border-color:#d44a32"></div> Inherits</div>
-  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#5a6348"></div> Imports</div>
-  <div class="legend-item"><div class="legend-edge dotted" style="border-color:#3d4a2e"></div> Contains</div>
-  <div class="legend-item"><div class="legend-edge" style="border-color:#e8a824"></div> Calls</div>
-  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#b8a878"></div> Instantiates</div>
-  <div class="legend-item"><div class="legend-edge dashed" style="border-color:#6dbd4a"></div> Uses Type</div>`;
-  legendEl.innerHTML = html;
+
+  // ── Edge kind toggles ──
+  var edgeHeader = document.createElement("h4");
+  edgeHeader.textContent = "Edges";
+  edgeHeader.style.marginTop = "10px";
+  legendEl.appendChild(edgeHeader);
+
+  for (const kind of EDGE_KIND_ORDER) {
+    const m = EDGE_KIND_META[kind];
+    if (!m) continue;
+    var item = document.createElement("div");
+    item.className = "legend-item" + (activeEdgeKinds.has(kind) ? "" : " inactive");
+    item.dataset.kind = kind;
+    item.dataset.type = "edge";
+    item.innerHTML = '<div class="legend-edge ' + m.style + '" style="border-color:' + m.border + '"></div> ' + m.label;
+    item.addEventListener("click", function() {
+      var k = this.dataset.kind;
+      if (activeEdgeKinds.has(k)) {
+        activeEdgeKinds.delete(k);
+        this.classList.add("inactive");
+      } else {
+        activeEdgeKinds.add(k);
+        this.classList.remove("inactive");
+      }
+      if (graphData) renderGraph();
+    });
+    legendEl.appendChild(item);
+  }
 }
 
 // ── Zoom detail view state ─────────────────────────────────────────
@@ -3665,12 +3727,19 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoom
     });
   }
 
+  // ── Resolve edge-through-node collisions (connected nodes only) ──
+  // Run BEFORE placing edgeless nodes so that any connected-node
+  // relocations are accounted for when computing maxConnectedY.
+  if (linkData && linkData.length > 0 && connectedNodes.length > 1) {
+    resolveEdgeNodeCollisions(connectedNodes, linkData, cGrid.colGap, cGrid.rowGap);
+  }
+
   // ── Place edgeless nodes in a row-major grid BELOW connected nodes ──
   if (edgelessNodes.length > 0) {
     const eGrid = gridDims(edgelessNodes.length);
     const eTotalW = (eGrid.cols - 1) * eGrid.colGap;
 
-    // Compute bottom of connected region
+    // Compute bottom of connected region (after collision resolution)
     let maxConnectedY = cOriginY;
     if (connectedNodes.length > 0) {
       connectedNodes.forEach(n => { if (n.y > maxConnectedY) maxConnectedY = n.y; });
@@ -3687,10 +3756,6 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoom
     });
   }
 
-  // ── Resolve edge-through-node collisions (connected nodes only) ──
-  if (linkData && linkData.length > 0 && connectedNodes.length > 1) {
-    resolveEdgeNodeCollisions(connectedNodes, linkData, cGrid.colGap, cGrid.rowGap);
-  }
 
   node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   link.attr("d", edgePath);
@@ -4528,14 +4593,31 @@ document.addEventListener("keydown", function(e) { if (e.key === "Escape") hideN
 window.addEventListener("scroll", function() { hideNodeContextMenu(); }, true);
 
 // ── Node selection & detail panel ──────────────────────────────────
-function selectNode(d) {
-  selectedNode = d;
-  highlightConnected(d);
-  const content = document.getElementById("detail-content");
-  if (!content) return;
+
+/** Navigate to a node by its ID — highlight it in the graph and show its info. */
+function _navigateToNode(nodeId) {
+  var node = null;
+  if (window._nodeData) {
+    node = window._nodeData.find(function(n) { return n.id === nodeId; });
+  }
+  if (!node) {
+    // Node might not be in the current view — try finding it in graphData
+    node = graphData && graphData.nodes.find(function(n) { return n.id === nodeId; });
+  }
+  if (!node) return;
+  _inspectorPinned = true;
+  highlightConnected(node);
+  populatePanel(node);
+  if (node.x != null && node.y != null) {
+    centerDetailOnGraphPoint(node.x, node.y, true);
+  }
+}
+
+function _buildInspectorHtml(d) {
   const incoming = graphData.edges.filter(e => (_nid(e.target) === d.id));
   const outgoing = graphData.edges.filter(e => (_nid(e.source) === d.id));
-  const findNodeName = function(id) { const n = graphData.nodes.find(n => n.id === _nid(id)); return n ? n.name : _nid(id); };
+  const findNode = function(id) { return graphData.nodes.find(n => n.id === _nid(id)); };
+  const findNodeName = function(id) { const n = findNode(id); return n ? n.name : _nid(id); };
   const edgeColor = { inherits: "#d44a32", imports: "#5a6348", contains: "#3d4a2e", calls: "#e8a824", instantiates: "#b8a878", uses_type: "#6dbd4a" };
 
   let html = `<h2>${d.name}</h2><div class="kind-tag ${d.kind}">${d.kind}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
@@ -4545,9 +4627,42 @@ function selectNode(d) {
   if (d.methods && d.methods.length > 0) { html += `<div class="detail-section"><h3>Methods (${d.methods.length})</h3><ul class="methods-list">${d.methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (d.members && d.members.length > 0) { html += `<div class="detail-section"><h3>Grouped Classes (${d.members.length})</h3><ul class="methods-list">${d.members.map(m => `<li>${m}</li>`).join("")}</ul></div>`; }
   if (d.member_methods && d.member_methods.length > 0) { html += `<div class="detail-section"><h3>Grouped Methods (${d.member_methods.length})</h3><ul class="methods-list">${d.member_methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
-  if (outgoing.length > 0) { html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div><span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> → ${findNodeName(e.target)}</li>`).join("")}</ul></div>`; }
-  if (incoming.length > 0) { html += `<div class="detail-section"><h3>Incoming (${incoming.length})</h3><ul class="rel-list">${incoming.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div>${findNodeName(e.source)} <span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> →</li>`).join("")}</ul></div>`; }
-  content.innerHTML = html;
+  if (outgoing.length > 0) {
+    html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => {
+      const targetId = _nid(e.target);
+      const name = findNodeName(e.target);
+      const col = edgeColor[e.kind] || '#8b949e';
+      return `<li><div class="rel-dot" style="background:${col}"></div><span style="color:${col}">${e.kind}</span> → <span class="rel-node-link" data-node-id="${targetId}">${name}</span></li>`;
+    }).join("")}</ul></div>`;
+  }
+  if (incoming.length > 0) {
+    html += `<div class="detail-section"><h3>Incoming (${incoming.length})</h3><ul class="rel-list">${incoming.map(e => {
+      const sourceId = _nid(e.source);
+      const name = findNodeName(e.source);
+      const col = edgeColor[e.kind] || '#8b949e';
+      return `<li><div class="rel-dot" style="background:${col}"></div><span class="rel-node-link" data-node-id="${sourceId}">${name}</span> <span style="color:${col}">${e.kind}</span> →</li>`;
+    }).join("")}</ul></div>`;
+  }
+  return html;
+}
+
+function _attachRelLinks(container) {
+  container.querySelectorAll(".rel-node-link").forEach(function(el) {
+    el.addEventListener("click", function(e) {
+      e.stopPropagation();
+      var nodeId = this.getAttribute("data-node-id");
+      if (nodeId) _navigateToNode(nodeId);
+    });
+  });
+}
+
+function selectNode(d) {
+  selectedNode = d;
+  highlightConnected(d);
+  const content = document.getElementById("detail-content");
+  if (!content) return;
+  content.innerHTML = _buildInspectorHtml(d);
+  _attachRelLinks(content);
 }
 
 function showPlaceholder() {
@@ -4558,21 +4673,8 @@ function showPlaceholder() {
 function populatePanel(d) {
   const content = document.getElementById("detail-content");
   if (!content) return;
-  const incoming = graphData.edges.filter(e => _nid(e.target) === d.id);
-  const outgoing = graphData.edges.filter(e => _nid(e.source) === d.id);
-  const findNodeName = function(id) { const n = graphData.nodes.find(n => n.id === _nid(id)); return n ? n.name : _nid(id); };
-  const edgeColor = { inherits: "#d44a32", imports: "#5a6348", contains: "#3d4a2e", calls: "#e8a824", instantiates: "#b8a878", uses_type: "#6dbd4a" };
-
-  let html = `<h2>${d.name}</h2><div class="kind-tag ${d.kind}">${d.kind}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
-  if (d.docstring) { html += `<div class="detail-section"><h3>Description</h3><div class="docstring">${d.docstring}</div></div>`; }
-  if (d.bases && d.bases.length > 0) { html += `<div class="detail-section"><h3>Inherits from</h3><div class="detail-row">${d.bases.join(", ")}</div></div>`; }
-  if (d.variables && d.variables.length > 0) { html += `<div class="detail-section"><h3>Variables (${d.variables.length})</h3><ul class="methods-list">${d.variables.map(v => `<li>${v.name}<span class="var-type">: ${v.type}</span></li>`).join("")}</ul></div>`; }
-  if (d.methods && d.methods.length > 0) { html += `<div class="detail-section"><h3>Methods (${d.methods.length})</h3><ul class="methods-list">${d.methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
-  if (d.members && d.members.length > 0) { html += `<div class="detail-section"><h3>Grouped Classes (${d.members.length})</h3><ul class="methods-list">${d.members.map(m => `<li>${m}</li>`).join("")}</ul></div>`; }
-  if (d.member_methods && d.member_methods.length > 0) { html += `<div class="detail-section"><h3>Grouped Methods (${d.member_methods.length})</h3><ul class="methods-list">${d.member_methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
-  if (outgoing.length > 0) { html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div><span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> → ${findNodeName(e.target)}</li>`).join("")}</ul></div>`; }
-  if (incoming.length > 0) { html += `<div class="detail-section"><h3>Incoming (${incoming.length})</h3><ul class="rel-list">${incoming.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div>${findNodeName(e.source)} <span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> →</li>`).join("")}</ul></div>`; }
-  content.innerHTML = html;
+  content.innerHTML = _buildInspectorHtml(d);
+  _attachRelLinks(content);
 }
 
 
@@ -4662,12 +4764,6 @@ function _hideNodeDesc() {
     bar.className = 'empty';
     bar.innerHTML = '<span class="desc-placeholder">Hover over a node to see its description</span>';
   }
-}
-
-function _escHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s || '';
-  return d.innerHTML;
 }
 
 /** Observe the panel container and scale the desc bar font size to fit. */
@@ -5138,6 +5234,12 @@ function _renderShortcutsPanel(container) {
     '<div class="shortcut-row"><span class="shortcut-label">Toggle shortcuts panel</span><span class="shortcut-keys"><kbd>?</kbd></span></div>' +
     '<div class="shortcut-row"><span class="shortcut-label">Fit all nodes in view</span><span class="shortcut-keys"><kbd>Space</kbd></span></div>' +
     '<div class="shortcut-row"><span class="shortcut-label">Go to node (label mode)</span><span class="shortcut-keys"><kbd>G</kbd></span></div>' +
+  '</div>';
+
+  html += '<div class="shortcut-section">' +
+    '<div class="shortcut-section-title">Legend &amp; Inspector</div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Toggle node/edge type</span><span class="shortcut-keys"><kbd>Click</kbd> legend item</span></div>' +
+    '<div class="shortcut-row"><span class="shortcut-label">Navigate to node</span><span class="shortcut-keys"><kbd>Click</kbd> relationship</span></div>' +
   '</div>';
 
   container.innerHTML = html;
