@@ -3209,6 +3209,150 @@ function pullBack(px, py, fromX, fromY, offset) {
   return { x: px - (dx / len) * offset, y: py - (dy / len) * offset };
 }
 
+/**
+ * Test whether a line segment from (x1,y1)→(x2,y2) intersects an
+ * axis-aligned rectangle centered at (cx,cy) with full dimensions w×h.
+ * Uses Liang–Barsky clipping.
+ */
+function segmentIntersectsRect(x1, y1, x2, y2, cx, cy, w, h) {
+  const hw = w / 2, hh = h / 2;
+  const left = cx - hw, right = cx + hw, top = cy - hh, bottom = cy + hh;
+  let tMin = 0, tMax = 1;
+  const dx = x2 - x1, dy = y2 - y1;
+  const clips = [
+    { p: -dx, q: x1 - left },
+    { p:  dx, q: right - x1 },
+    { p: -dy, q: y1 - top },
+    { p:  dy, q: bottom - y1 },
+  ];
+  for (const { p, q } of clips) {
+    if (p === 0) { if (q < 0) return false; }
+    else {
+      const r = q / p;
+      if (p < 0) { if (r > tMax) return false; if (r > tMin) tMin = r; }
+      else       { if (r < tMin) return false; if (r < tMax) tMax = r; }
+    }
+  }
+  return tMin <= tMax;
+}
+
+/**
+ * After grid placement, globally optimise node positions so that edges
+ * do not pass through unconnected nodes and connected nodes stay close.
+ *
+ * Uses a two-phase approach:
+ *   Phase 1 – best pairwise swap: each iteration evaluates EVERY pair
+ *             of nodes, picks the swap with the largest score improvement,
+ *             and applies it.  Repeats until no swap helps.
+ *   Phase 2 – relocate to empty cells: tries moving each node to nearby
+ *             empty grid cells, picks the best move each iteration.
+ *
+ * The global scoring function weighs edge-node collisions very heavily
+ * (10 000 per collision) and adds total edge length as a tiebreaker so
+ * that, among collision-free layouts, the one with shorter edges wins.
+ */
+function resolveEdgeNodeCollisions(nodeData, linkData, colGap, rowGap) {
+  if (!linkData || linkData.length === 0 || nodeData.length < 2) return;
+
+  const edgePairs = [];
+  linkData.forEach(e => {
+    const s = typeof e.source === "object" ? e.source.id : e.source;
+    const t = typeof e.target === "object" ? e.target.id : e.target;
+    edgePairs.push([s, t]);
+  });
+
+  const nodeById = new Map(nodeData.map(n => [n.id, n]));
+  const PAD = 12;
+  const N = nodeData.length;
+
+  // ── Global scoring function ──────────────────────────────────────
+  function layoutScore() {
+    let collisions = 0, edgeLen = 0;
+    for (const [sid, tid] of edgePairs) {
+      const src = nodeById.get(sid), tgt = nodeById.get(tid);
+      if (!src || !tgt) continue;
+      edgeLen += Math.hypot(src.x - tgt.x, src.y - tgt.y);
+      for (const n of nodeData) {
+        if (n.id === sid || n.id === tid) continue;
+        const sz = NODE_SIZE[n.kind] || { w: 160, h: 60 };
+        if (segmentIntersectsRect(src.x, src.y, tgt.x, tgt.y,
+                                  n.x, n.y, sz.w + PAD, sz.h + PAD)) {
+          collisions++;
+        }
+      }
+    }
+    return collisions * 10000 + edgeLen;
+  }
+
+  function swap(a, b) {
+    const tx = a.x, ty = a.y;
+    a.x = b.x; a.y = b.y;
+    b.x = tx; b.y = ty;
+  }
+
+  // ── Phase 1: best pairwise swap ──────────────────────────────────
+  const SWAP_LIMIT = N > 40 ? 8 : 25;
+  for (let iter = 0; iter < SWAP_LIMIT; iter++) {
+    const base = layoutScore();
+    if (base === 0) return;                       // perfect layout
+    let bestDelta = 0, bestI = -1, bestJ = -1;
+
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        swap(nodeData[i], nodeData[j]);
+        const delta = base - layoutScore();
+        swap(nodeData[i], nodeData[j]);           // undo
+        if (delta > bestDelta) { bestDelta = delta; bestI = i; bestJ = j; }
+      }
+    }
+    if (bestI < 0) break;                         // no improving swap
+    swap(nodeData[bestI], nodeData[bestJ]);
+  }
+
+  // ── Phase 2: relocate to empty cells ─────────────────────────────
+  const posKey = (x, y) => x + "|" + y;
+  const occ = new Set(nodeData.map(n => posKey(n.x, n.y)));
+  const empties = [];
+  const seen = new Set();
+  for (const n of nodeData) {
+    for (let dr = -3; dr <= 3; dr++) {
+      for (let dc = -3; dc <= 3; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const ex = n.x + dc * colGap, ey = n.y + dr * rowGap;
+        const k = posKey(ex, ey);
+        if (!occ.has(k) && !seen.has(k)) { seen.add(k); empties.push({ x: ex, y: ey }); }
+      }
+    }
+  }
+
+  const MOVE_LIMIT = N > 40 ? 6 : 15;
+  for (let iter = 0; iter < MOVE_LIMIT; iter++) {
+    const base = layoutScore();
+    if (base === 0) return;
+    let bestDelta = 0, bestIdx = -1, bestCell = null;
+
+    for (let i = 0; i < N; i++) {
+      const ox = nodeData[i].x, oy = nodeData[i].y;
+      for (const cell of empties) {
+        if (occ.has(posKey(cell.x, cell.y))) continue;
+        nodeData[i].x = cell.x; nodeData[i].y = cell.y;
+        const delta = base - layoutScore();
+        nodeData[i].x = ox; nodeData[i].y = oy;
+        if (delta > bestDelta) { bestDelta = delta; bestIdx = i; bestCell = cell; }
+      }
+    }
+
+    if (bestIdx >= 0) {
+      occ.delete(posKey(nodeData[bestIdx].x, nodeData[bestIdx].y));
+      nodeData[bestIdx].x = bestCell.x;
+      nodeData[bestIdx].y = bestCell.y;
+      occ.add(posKey(bestCell.x, bestCell.y));
+    } else {
+      break;
+    }
+  }
+}
+
 function edgePath(d) {
   const src = (typeof d.source === "object" && d.source !== null) ? d.source : window._nodeData?.find(n => n.id === d.source);
   const tgt = (typeof d.target === "object" && d.target !== null) ? d.target : window._nodeData?.find(n => n.id === d.target);
@@ -3388,7 +3532,7 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
   else { svg.call(zoomBehavior.transform, t); }
 }
 
-function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
+function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoomBehavior) {
   if (!nodeData || nodeData.length === 0) return;
 
   const container = document.getElementById("graph-container");
@@ -3407,15 +3551,124 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
   const centerX = width / 2;
   const centerY = height / 2;
 
-  // Snap each node to its grid cell, centered
+  // Snap each node to its nearest grid cell (preserves simulation topology)
   nodeData.forEach(n => {
-    const col = Math.round((n.x - centerX + totalW / 2) / colGap);
-    const row = Math.round((n.y - centerY + totalH / 2) / rowGap);
-    n.x = centerX + (col * colGap - totalW / 2);
-    n.y = centerY + (row * rowGap - totalH / 2);
     n.fx = null;
     n.fy = null;
   });
+
+  // ── Topology-aware compact placement ─────────────────────────────
+  // BFS from the highest-degree node, placing each node in the grid
+  // cell closest to its already-placed neighbours.  Vertical distance
+  // is penalised slightly more so the layout extends horizontally
+  // first.  This produces a compact, non-jagged starting layout for
+  // the global optimizer that follows.
+  const originX = centerX - totalW / 2;
+  const originY = centerY - totalH / 2;
+  {
+    // Build adjacency from edges
+    const _adj = new Map();
+    const _nodeById = new Map();
+    nodeData.forEach(n => { _adj.set(n.id, new Set()); _nodeById.set(n.id, n); });
+    if (linkData && linkData.length > 0) {
+      linkData.forEach(e => {
+        const s = typeof e.source === "object" ? e.source.id : e.source;
+        const t = typeof e.target === "object" ? e.target.id : e.target;
+        if (_adj.has(s)) _adj.get(s).add(t);
+        if (_adj.has(t)) _adj.get(t).add(s);
+      });
+    }
+    const _deg = new Map();
+    nodeData.forEach(n => _deg.set(n.id, _adj.get(n.id)?.size || 0));
+
+    // BFS ordering: start from highest degree, then each component
+    const _bfs = [];
+    const _vis = new Set();
+    while (_vis.size < nodeData.length) {
+      let best = null, bestD = -1;
+      for (const n of nodeData) {
+        if (!_vis.has(n.id) && (_deg.get(n.id) || 0) > bestD) {
+          bestD = _deg.get(n.id) || 0; best = n;
+        }
+      }
+      if (!best) break;
+      const q = [best]; _vis.add(best.id);
+      while (q.length > 0) {
+        const cur = q.shift();
+        _bfs.push(cur);
+        // Visit neighbours sorted by degree (highest first) for stability
+        const nbrs = [...(_adj.get(cur.id) || [])].sort(
+          (a, b) => (_deg.get(b) || 0) - (_deg.get(a) || 0)
+        );
+        for (const nid of nbrs) {
+          if (!_vis.has(nid)) {
+            _vis.add(nid);
+            const nb = _nodeById.get(nid);
+            if (nb) q.push(nb);
+          }
+        }
+      }
+    }
+
+    // Generate grid cell positions
+    const _cells = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        _cells.push({ x: originX + c * colGap, y: originY + r * rowGap });
+      }
+    }
+    // Overflow rows if needed
+    while (_cells.length < nodeData.length) {
+      const r = Math.floor(_cells.length / cols);
+      const c = _cells.length % cols;
+      _cells.push({ x: originX + c * colGap, y: originY + r * rowGap });
+    }
+
+    const _used = new Set();
+    const _placedPos = new Map(); // nodeId → { x, y }
+    const _midCell = _cells[Math.min(
+      Math.floor(rows / 2) * cols + Math.floor(cols / 2),
+      _cells.length - 1
+    )];
+
+    _bfs.forEach(n => {
+      // Neighbours that have already been placed
+      const nbrs = [...(_adj.get(n.id) || [])]
+        .filter(nid => _placedPos.has(nid))
+        .map(nid => _placedPos.get(nid));
+
+      let bestIdx = -1, bestCost = Infinity;
+      for (let ci = 0; ci < _cells.length; ci++) {
+        if (_used.has(ci)) continue;
+        const cell = _cells[ci];
+        let cost;
+        if (nbrs.length > 0) {
+          // Manhattan distance to placed neighbours, penalise vertical more
+          cost = 0;
+          for (const p of nbrs) {
+            cost += Math.abs(cell.x - p.x) + Math.abs(cell.y - p.y) * 1.35;
+          }
+        } else {
+          // No placed neighbours → prefer centre of grid
+          cost = Math.abs(cell.x - _midCell.x)
+               + Math.abs(cell.y - _midCell.y) * 1.35;
+        }
+        if (cost < bestCost) { bestCost = cost; bestIdx = ci; }
+      }
+      if (bestIdx >= 0) {
+        n.x = _cells[bestIdx].x;
+        n.y = _cells[bestIdx].y;
+        _used.add(bestIdx);
+        _placedPos.set(n.id, { x: n.x, y: n.y });
+      }
+    });
+  }
+
+  // Resolve edge-through-node collisions by swapping / relocating nodes
+  if (linkData && linkData.length > 0) {
+    resolveEdgeNodeCollisions(nodeData, linkData, colGap, rowGap);
+  }
+
   node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   link.attr("d", edgePath);
     edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
@@ -4082,7 +4335,7 @@ function renderGraph() {
         });
       }
 
-      snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel);
+      snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoomBehavior);
       // Final safety check after grid snap animation
       var eid2 = setTimeout(function() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
