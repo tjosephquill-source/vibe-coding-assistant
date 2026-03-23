@@ -275,6 +275,7 @@
     display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
     text-align:left; gap:0.4em;
     transition:opacity .2s;
+    overflow:hidden;
   }
   #node-desc-bar .desc-header {
     display:flex; align-items:center; gap:0.4em;
@@ -4710,12 +4711,14 @@ function _showNodeDesc(d) {
   if (cached && cached.contentHash === hash) {
     bar.className = '';
     bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(cached.description) + '</span>');
+    _fitNodeDescFontSize();
     return;
   }
 
   // Show loading state
   bar.className = '';
   bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">Generating description…</span>');
+  _fitNodeDescFontSize();
 
   // Abort previous request
   if (_nodeDescAbort) { _nodeDescAbort.abort(); _nodeDescAbort = null; }
@@ -4744,15 +4747,18 @@ function _showNodeDesc(d) {
       if (_nodeDescHoverId !== d.id) return; // stale
       if (data.error) {
         bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">' + _escHtml(data.error) + '</span>');
+        _fitNodeDescFontSize();
         return;
       }
       _nodeDescCache.set(d.id, { description: data.description, contentHash: hash });
       bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(data.description) + '</span>');
+      _fitNodeDescFontSize();
     })
     .catch(function(err) {
       if (err.name === 'AbortError') return;
       if (_nodeDescHoverId !== d.id) return;
       bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">Failed to load description</span>');
+      _fitNodeDescFontSize();
     });
 }
 
@@ -4766,23 +4772,50 @@ function _hideNodeDesc() {
   }
 }
 
-/** Observe the panel container and scale the desc bar font size to fit. */
+/** Shrink the font size of #node-desc-bar until its content fits without overflow.
+ *  Called after every content update and on container resize. */
+function _fitNodeDescFontSize() {
+  var bar = document.getElementById('node-desc-bar');
+  if (!bar) return;
+  var container = bar.parentElement;
+  if (!container) return;
+  var cw = container.clientWidth;
+  var ch = container.clientHeight;
+  if (cw <= 0 || ch <= 0) return;
+
+  // Start from a generous base derived from the container dimensions
+  var maxBase = Math.min(cw, ch) * 0.09;
+  maxBase = Math.max(10, Math.min(maxBase, 40));
+
+  var base = maxBase;
+  var minBase = 8;
+
+  var kindEl = bar.querySelector('.desc-kind');
+
+  // Iteratively shrink until the content fits within the bar's client area
+  for (var attempts = 0; attempts < 20; attempts++) {
+    bar.style.fontSize = base + 'px';
+    if (kindEl) kindEl.style.fontSize = (base * 0.45) + 'px';
+    // scrollHeight > clientHeight means content overflows vertically
+    if (bar.scrollHeight <= bar.clientHeight + 1) {
+      break; // fits
+    }
+    // Shrink by 10%
+    base = base * 0.9;
+    if (base < minBase) {
+      base = minBase;
+      bar.style.fontSize = base + 'px';
+      if (kindEl) kindEl.style.fontSize = (base * 0.45) + 'px';
+      break;
+    }
+  }
+}
+
+/** Observe the panel container and re-fit on resize. */
 function _nodeDescResizeObserver(container) {
   if (!window.ResizeObserver) return;
-  var ro = new ResizeObserver(function(entries) {
-    var entry = entries[0];
-    if (!entry) return;
-    var w = entry.contentRect.width;
-    var h = entry.contentRect.height;
-    var bar = document.getElementById('node-desc-bar');
-    if (!bar) return;
-    // Base font size on the smaller dimension, clamped
-    var base = Math.min(w, h) * 0.09;
-    base = Math.max(10, Math.min(base, 40));
-    bar.style.fontSize = base + 'px';
-    // Kind tag stays proportionally smaller
-    var kindEl = bar.querySelector('.desc-kind');
-    if (kindEl) kindEl.style.fontSize = (base * 0.45) + 'px';
+  var ro = new ResizeObserver(function() {
+    _fitNodeDescFontSize();
   });
   ro.observe(container);
 }

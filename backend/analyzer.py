@@ -863,10 +863,35 @@ class _JSRelationshipCollector:
     so the shared edge-creation helper works for both languages.
     """
 
+    # Common JS / DOM / Web API built-in type names that should never be
+    # matched as user-defined class references.  Without this, a Python
+    # class named ``Node`` (for example) would falsely match every DOM
+    # ``Node`` reference in JS code.
+    _JS_BUILTIN_NAMES: set[str] = {
+        # DOM / Web API
+        "Node", "Element", "Document", "Window", "Event", "EventTarget",
+        "HTMLElement", "SVGElement", "Text", "Comment", "Attr",
+        "MutationObserver", "IntersectionObserver", "ResizeObserver",
+        "Request", "Response", "Headers", "URL", "FormData",
+        "Blob", "File", "Image", "Worker", "MessageChannel",
+        # JS built-in objects
+        "Object", "Array", "Function", "Symbol", "Date", "RegExp",
+        "Promise", "Proxy", "Reflect", "Iterator", "Generator",
+        "Map", "Set", "WeakMap", "WeakSet", "WeakRef",
+        "ArrayBuffer", "DataView", "SharedArrayBuffer",
+        "Int8Array", "Uint8Array", "Float32Array", "Float64Array",
+        # Errors
+        "Error", "TypeError", "RangeError", "SyntaxError",
+        "ReferenceError", "URIError", "EvalError",
+        # Other common globals
+        "JSON", "Math", "Intl", "Console",
+    }
+
     def __init__(self, file_path: str, module_qname: str, known_classes: set[str]):
         self.file_path = file_path
         self.module_qname = module_qname
-        self.known_classes = known_classes
+        # Exclude JS built-in names from cross-file class matching
+        self.known_classes = known_classes - self._JS_BUILTIN_NAMES
         self.imports: dict[str, str] = {}
         self.import_sources: dict[str, str] = {}
         self.calls: list[tuple[str, str, int]] = []
@@ -1291,6 +1316,12 @@ def _add_collector_edges(
         if caller_fn:
             callee_loose_qname = f"{mod_qname}.{callee_name}"
             callee_loose = all_functions.get(callee_loose_qname)
+
+            # 2b) Cross-module: resolve via imports table
+            if callee_loose is None and callee_name in rel_collector.imports:
+                imported_qname = rel_collector.imports[callee_name]
+                callee_loose = all_functions.get(imported_qname)
+
             if callee_loose and callee_loose.id != caller_fn.id:
                 graph.add_edge(Edge(
                     source=caller_fn.id,
@@ -2194,10 +2225,22 @@ def _find_metanode_groups(
     Grouping strategies (applied in priority order):
     1. Same kind  (e.g. all test_group → "All Tests")
     2. Same parent directory for remaining ungrouped metanodes
+
+    After each strategy, groups are split into their connected sub-components
+    so that nodes which share no edge path are never grouped together.
     """
     groupable = [n for n in graph.nodes if n.kind in _GROUPABLE_META_KINDS]
     if len(groupable) < min_group_size:
         return []
+
+    # Pre-build adjacency for connectivity checks
+    groupable_ids = {n.id for n in groupable}
+    adj = _build_adjacency(groupable_ids, graph.edges)
+
+    def _split_into_connected(candidate: set[str]) -> list[set[str]]:
+        """Split a candidate group into its connected sub-components."""
+        sub_adj = {nid: adj.get(nid, set()) & candidate for nid in candidate}
+        return _find_connected_components(candidate, sub_adj)
 
     groups: list[set[str]] = []
     already_grouped: set[str] = set()
@@ -2210,8 +2253,11 @@ def _find_metanode_groups(
     for kind, ids in sorted(kind_buckets.items(), key=lambda x: -len(x[1])):
         available = [i for i in ids if i not in already_grouped]
         if len(available) >= min_group_size:
-            groups.append(set(available))
-            already_grouped.update(available)
+            # Split into connected sub-components
+            for comp in _split_into_connected(set(available)):
+                if len(comp) >= min_group_size:
+                    groups.append(comp)
+                    already_grouped.update(comp)
 
     # ── Strategy 2: group remaining by common parent directory ──────
     dir_buckets: dict[str, list[str]] = defaultdict(list)
@@ -2222,8 +2268,11 @@ def _find_metanode_groups(
 
     for dir_path, ids in sorted(dir_buckets.items(), key=lambda x: -len(x[1])):
         if len(ids) >= min_group_size:
-            groups.append(set(ids))
-            already_grouped.update(ids)
+            # Split into connected sub-components
+            for comp in _split_into_connected(set(ids)):
+                if len(comp) >= min_group_size:
+                    groups.append(comp)
+                    already_grouped.update(comp)
 
     return groups
 
