@@ -99,7 +99,7 @@ def _save_to_cache(root_dir: str, abstract: bool, graph_dict: dict) -> None:
 class NodeKind(str, Enum):
     CLASS = "class"
     METHOD = "method"
-    METACLASS = "metaclass"
+    ISLAND_CHAIN = "island_chain"
     TEST_GROUP = "test_group"
     MODEL_GROUP = "model_group"
     CONFIG_GROUP = "config_group"
@@ -129,8 +129,8 @@ class Node:
     line_end: int
     methods: list[str] = field(default_factory=list)
     variables: list[dict] = field(default_factory=list)    # [{"name": ..., "type": ...}, ...]
-    members: list[str] = field(default_factory=list)      # for metaclass nodes
-    member_ids: list[str] = field(default_factory=list)   # for metaclass drilldown
+    members: list[str] = field(default_factory=list)      # for island chain nodes
+    member_ids: list[str] = field(default_factory=list)   # for island chain drilldown
     bases: list[str] = field(default_factory=list)
     docstring: Optional[str] = None
     depth: int = 0                                         # hierarchy depth level
@@ -188,7 +188,7 @@ def _enrich_languages(graph_dict: dict) -> None:
     """Add a ``languages`` list to every node dict.
 
     For leaf nodes the language is derived from the file extension.
-    For container nodes (metaclass / *_group) the languages are the
+    For container nodes (island chain / *_group) the languages are the
     union of their members' languages, resolved recursively.
     """
     by_id: dict[str, dict] = {}
@@ -212,7 +212,7 @@ def _enrich_languages(graph_dict: dict) -> None:
         if lang:
             cache[node_id] = {lang}
             return cache[node_id]
-        # Aggregate from members (metaclass / group nodes)
+        # Aggregate from members (island chain / group nodes)
         result: set[str] = set()
         for mid in nd.get("member_ids") or []:
             result.update(_langs(mid))
@@ -387,6 +387,7 @@ class _ClassCollector(ast.NodeVisitor):
         self.module_qname = module_qname
         self.classes: dict[str, Node] = {}
         self.functions: dict[str, Node] = {}
+        self.loose_functions: dict[str, Node] = {}   # module-level functions
         self._current_class: Optional[str] = None
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -428,6 +429,21 @@ class _ClassCollector(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if not self._current_class:
+            # ── Top-level (loose) function ──
+            qname = f"{self.module_qname}.{node.name}"
+            nid = _make_id(self.file_path, node.name)
+            fn_node = Node(
+                id=nid,
+                kind=NodeKind.METHOD,
+                name=node.name,
+                qualified_name=qname,
+                file_path=self.file_path,
+                line_start=node.lineno,
+                line_end=node.end_lineno or node.lineno,
+                variables=_extract_method_variables(node),
+                docstring=ast.get_docstring(node),
+            )
+            self.loose_functions[qname] = fn_node
             return
 
         qname = f"{self.module_qname}.{self._current_class}.{node.name}"
@@ -749,6 +765,7 @@ class _JSClassCollector:
         self.module_qname = module_qname
         self.classes: dict[str, Node] = {}
         self.functions: dict[str, Node] = {}
+        self.loose_functions: dict[str, Node] = {}   # standalone functions
         self._class_ranges: dict[str, tuple[int, int]] = {}
 
     def collect(self, source: str, line_offset: int = 0) -> None:
@@ -810,6 +827,31 @@ class _JSClassCollector:
                     variables=_extract_js_method_variables(method_params),
                 )
                 self.functions[fn_qname] = fn_node
+
+        # ── Standalone (top-level) functions ────────────────────────
+        for match in _JS_FUNCTION_PAT.finditer(cleaned):
+            func_name = match.group(1)
+            func_line = cleaned[: match.start()].count("\n") + 1 + line_offset
+            # Skip if inside a class body
+            inside_class = False
+            for cls_name, (cs, ce) in self._class_ranges.items():
+                if cs <= func_line <= ce:
+                    inside_class = True
+                    break
+            if inside_class:
+                continue
+            fn_qname = f"{self.module_qname}.{func_name}"
+            fn_id = _make_id(self.file_path, func_name)
+            fn_node = Node(
+                id=fn_id,
+                kind=NodeKind.METHOD,
+                name=func_name,
+                qualified_name=fn_qname,
+                file_path=self.file_path,
+                line_start=func_line,
+                line_end=func_line,
+            )
+            self.loose_functions[fn_qname] = fn_node
 
 
 class _JSRelationshipCollector:
@@ -973,6 +1015,11 @@ def analyze_codebase(root_dir: str) -> Graph:
                     kind=EdgeKind.CONTAINS,
                     label="has method",
                 ))
+
+        # Register top-level (loose) functions
+        for fn_qname, fn_node in collector.loose_functions.items():
+            all_functions[fn_qname] = fn_node
+            graph.add_node(fn_node)
 
     # ── Pass 1b: JavaScript / TypeScript files ──────────────────────
     js_files = sorted(set(
@@ -1145,6 +1192,11 @@ def _register_collected(
                 label="has method",
             ))
 
+    # Register top-level (loose) JS/TS functions
+    for fn_qname, fn_node in collector.loose_functions.items():
+        all_functions[fn_qname] = fn_node
+        graph.add_node(fn_node)
+
 
 def _add_collector_edges(
     graph: Graph,
@@ -1170,12 +1222,24 @@ def _add_collector_edges(
 
     # Calls / instantiations
     for context, callee_name, lineno in rel_collector.calls:
+        # ── Resolve the caller node ──
+        caller_fn = None
+        caller_class_name = None
         if context != "__module__" and "." in context:
-            caller_class_name, _caller_method_name = context.split(".", 1)
+            # Call from inside a class method (e.g. context = "MyClass.do_stuff")
+            caller_class_name = context.split(".")[0]
             caller_qname = f"{mod_qname}.{context}"
             caller_fn = all_functions.get(caller_qname)
+        elif context != "__module__":
+            # Call from inside a top-level function (e.g. context = "_ensure_cache_dir")
+            caller_qname = f"{mod_qname}.{context}"
+            caller_fn = all_functions.get(caller_qname)
+
+        # ── Resolve the callee node ──
+        # 1) Same-class method call
+        if caller_fn and caller_class_name:
             callee_fn = methods_by_class.get(caller_class_name, {}).get(callee_name)
-            if caller_fn and callee_fn:
+            if callee_fn:
                 graph.add_edge(Edge(
                     source=caller_fn.id,
                     target=callee_fn.id,
@@ -1183,11 +1247,32 @@ def _add_collector_edges(
                     label=f"calls {callee_name}",
                 ))
 
+        # 2) Call to a known top-level function (from any caller)
+        if caller_fn:
+            callee_loose_qname = f"{mod_qname}.{callee_name}"
+            callee_loose = all_functions.get(callee_loose_qname)
+            if callee_loose and callee_loose.id != caller_fn.id:
+                graph.add_edge(Edge(
+                    source=caller_fn.id,
+                    target=callee_loose.id,
+                    kind=EdgeKind.CALLS,
+                    label=f"calls {callee_name}",
+                ))
+
+        # 3) Instantiation: call to a known class
         if callee_name in all_classes:
-            caller_class_name = context.split(".")[0] if context != "__module__" else None
+            # From a class context → class-to-class instantiation
             if caller_class_name and caller_class_name in all_classes:
                 graph.add_edge(Edge(
                     source=all_classes[caller_class_name].id,
+                    target=all_classes[callee_name].id,
+                    kind=EdgeKind.INSTANTIATES,
+                    label=f"creates {callee_name}",
+                ))
+            # From a top-level function context → function-to-class instantiation
+            elif caller_fn and not caller_class_name:
+                graph.add_edge(Edge(
+                    source=caller_fn.id,
                     target=all_classes[callee_name].id,
                     kind=EdgeKind.INSTANTIATES,
                     label=f"creates {callee_name}",
@@ -1204,6 +1289,17 @@ def _add_collector_edges(
                     kind=EdgeKind.USES_TYPE,
                     label=f"depends on {type_name}",
                 ))
+            elif context != "__module__" and "." not in context:
+                # Top-level function referencing a type
+                fn_qname = f"{mod_qname}.{context}"
+                fn_node = all_functions.get(fn_qname)
+                if fn_node:
+                    graph.add_edge(Edge(
+                        source=fn_node.id,
+                        target=all_classes[type_name].id,
+                        kind=EdgeKind.USES_TYPE,
+                        label=f"depends on {type_name}",
+                    ))
 
     # Class name references
     for context, class_name in rel_collector.class_refs:
@@ -1488,13 +1584,13 @@ def _collapse_communities(
     depth: int,
 ) -> Graph:
     """
-    Collapse each community into a single metaclass node.
-    Returns a new graph with communities replaced by metaclass nodes.
+    Collapse each community into a single island chain node.
+    Returns a new graph with communities replaced by island chain nodes.
     Tracks collapsed nodes/edges as intermediates for multi-depth drill-down.
     """
     node_by_id: dict[str, Node] = {n.id: n for n in graph.nodes}
 
-    # Map: original node ID → metaclass ID (if it's being collapsed)
+    # Map: original node ID → island chain ID (if it's being collapsed)
     id_to_meta: dict[str, str] = {}
     collapsed_ids: set[str] = set()
     meta_nodes: list[Node] = []
@@ -1540,7 +1636,7 @@ def _collapse_communities(
                 kind_label = _GROUP_KIND_LABEL[single_kind]
                 name = f"All {kind_label} ({len(member_names)} groups)"
                 docstring = f"Hierarchical grouping of {len(member_names)} {kind_label.lower()} sub-groups"
-            elif single_kind == NodeKind.METACLASS:
+            elif single_kind == NodeKind.ISLAND_CHAIN:
                 name = f"{group_label} ({len(member_names)} groups)"
                 docstring = f"Community of {len(member_names)} tightly-coupled groups"
             else:
@@ -1555,7 +1651,7 @@ def _collapse_communities(
 
         meta_node = Node(
             id=meta_id,
-            kind=NodeKind.METACLASS,
+            kind=NodeKind.ISLAND_CHAIN,
             name=name,
             qualified_name=f"meta::community::{meta_id}",
             file_path=common_dir,
@@ -1596,7 +1692,7 @@ def _collapse_communities(
         if n.id not in collapsed_ids:
             out.add_node(n)
 
-    # Add metaclass nodes
+    # Add island chain nodes
     for mn in meta_nodes:
         out.add_node(mn)
 
@@ -1609,7 +1705,7 @@ def _collapse_communities(
         s = id_to_meta.get(e.source, e.source)
         t = id_to_meta.get(e.target, e.target)
 
-        # Skip self-loops (both ends collapsed into same metaclass)
+        # Skip self-loops (both ends collapsed into same island chain)
         if s == t:
             continue
 
@@ -1695,8 +1791,8 @@ _CATEGORY_LABEL: dict[str, str] = {
     "event":     "Events & Signals",
 }
 
-# Kinds that represent groups/metaclasses (eligible for higher-level grouping)
-_GROUPABLE_META_KINDS: set[NodeKind] = {NodeKind.METACLASS} | {
+# Kinds that represent groups/island chains (eligible for higher-level grouping)
+_GROUPABLE_META_KINDS: set[NodeKind] = {NodeKind.ISLAND_CHAIN} | {
     k for k in NodeKind if k.value.endswith("_group")
 }
 
@@ -1709,13 +1805,13 @@ _GROUP_KIND_LABEL: dict[NodeKind, str] = {
     NodeKind.UTILITY_GROUP:   "Utilities",
     NodeKind.EXCEPTION_GROUP: "Exceptions & Warnings",
     NodeKind.EVENT_GROUP:     "Events & Signals",
-    NodeKind.METACLASS:       "Groups",
+    NodeKind.ISLAND_CHAIN:       "Groups",
 }
 
 
 def _classify_by_name(name: str, file_name: str, bases_lower: list[str]) -> Optional[str]:
     """
-    Core name/path/base classifier — shared by both class and metaclass paths.
+    Core name/path/base classifier — shared by both class and island chain paths.
     Returns a category key or None.
 
     Uses stem-based file matching so it works across Python, JS/TS and HTML.
@@ -1847,18 +1943,30 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
     that groups stay cohesive and navigable.  Unclassified classes that share a
     source file with at least *min_group_size* peers are grouped by file.
 
-    Unlike the old loose-node-only approach, this works on every CLASS node so
-    the abstract view gets meaningful clusters even when the raw graph is
+    Unlike the old loose-node-only approach, this works on every CLASS node
+    and every loose METHOD node (top-level functions not belonging to a class)
+    so the abstract view gets meaningful clusters even when the raw graph is
     heavily interconnected.
     """
     node_by_id = {n.id: n for n in graph.nodes}
 
-    # ── Step 1: classify every CLASS node ────────────────────────────
+    # Identify loose METHOD nodes: those NOT targeted by any CONTAINS edge
+    contained_ids: set[str] = set()
+    for e in graph.edges:
+        if e.kind == EdgeKind.CONTAINS:
+            contained_ids.add(e.target)
+
+    # ── Step 1: classify every CLASS node and loose METHOD node ──────
     classified: dict[str, str] = {}       # node_id → category key
     unclassified_ids: list[str] = []
 
     for n in graph.nodes:
-        if n.kind != NodeKind.CLASS:
+        # Include CLASS nodes and loose METHOD nodes
+        if n.kind == NodeKind.CLASS:
+            pass  # always eligible
+        elif n.kind == NodeKind.METHOD and n.id not in contained_ids:
+            pass  # loose function — eligible
+        else:
             continue
         cat = _classify_loose_node(n)
         if cat:
@@ -1944,10 +2052,10 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
         common_dir = _safe_common_dir(file_paths)
 
         if category == "file":
-            kind = NodeKind.METACLASS
+            kind = NodeKind.ISLAND_CHAIN
             label = stem or "module"
-            name = f"{label} ({len(member_names)} classes)"
-            docstring = f"Classes from {stem}.py grouped by co-location"
+            name = f"{label} ({len(member_names)})"
+            docstring = f"Nodes from {stem}.py grouped by co-location"
         else:
             kind = _CATEGORY_KIND[category]
             base_label = _CATEGORY_LABEL[category]
@@ -2035,7 +2143,7 @@ def _find_metanode_groups(
 ) -> list[set[str]]:
     """
     Find groups of metanodes / *_group nodes that can be collapsed into
-    higher-level metaclass nodes.
+    higher-level island chain nodes.
 
     Grouping strategies (applied in priority order):
     1. Same kind  (e.g. all test_group → "All Tests")
@@ -2114,7 +2222,7 @@ def abstract_graph(
 ) -> Graph:
     """
     Recursively detect tightly-coupled communities and collapse them into
-    metaclass nodes.  ALL class nodes are first grouped by naming / path /
+    island chain nodes.  ALL class nodes are first grouped by naming / path /
     base-class heuristics (sub-grouped by source file for cohesion).
 
     Then a multi-pass loop alternates between:
@@ -2126,13 +2234,13 @@ def abstract_graph(
 
     Communities are capped at `max_community_size` nodes so the overview
     stays navigable.  Larger clusters are subdivided and the hierarchical
-    loop naturally builds deeper levels of metaclasses.
+    loop naturally builds deeper levels of island chains.
     """
     # First, group all classes by naming / file heuristics
     current = _collapse_all_by_heuristic(graph)
 
     # Node kinds eligible for further community-based collapsing
-    _GROUPABLE_KINDS = {NodeKind.CLASS, NodeKind.METACLASS} | {
+    _GROUPABLE_KINDS = {NodeKind.CLASS, NodeKind.ISLAND_CHAIN} | {
         k for k in NodeKind if k.value.endswith("_group")
     }
 

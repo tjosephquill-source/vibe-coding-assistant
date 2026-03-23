@@ -493,7 +493,7 @@ async def node_description(request: Request):
     file_path = body.get("file_path", "")
     line_start = body.get("line_start", 0)
     line_end = body.get("line_end", 0)
-    members = body.get("members")  # for metaclass / group nodes
+    members = body.get("members")  # for island chain / group nodes
 
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:

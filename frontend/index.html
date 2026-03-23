@@ -359,7 +359,7 @@
   .node-rect { stroke-width:1.5; rx:2px; ry:2px; }
   .node-rect.class  { fill:#1a2610; stroke:#6dbd4a; }
   .node-rect.method { fill:#1a1408; stroke:#e8a824; }
-  .node-rect.metaclass { fill:#201a08; stroke:#b8a878; }
+  .node-rect.island_chain { fill:#201a08; stroke:#b8a878; }
   .node-rect.test_group { fill:#0e1a0a; stroke:#4a8033; }
   .node-rect.semantic_group { fill:#14180e; stroke:#5a6348; }
 
@@ -411,7 +411,7 @@
   }
   .kind-tag.class    { background:#6dbd4a1a; color:#6dbd4a; border-color:#6dbd4a44; }
   .kind-tag.method   { background:#e8a8241a; color:#e8a824; border-color:#e8a82444; }
-  .kind-tag.metaclass { background:#b8a8781a; color:#b8a878; border-color:#b8a87844; }
+  .kind-tag.island_chain { background:#b8a8781a; color:#b8a878; border-color:#b8a87844; }
   .kind-tag.test_group    { background:#4a80331a; color:#4a8033; border-color:#4a803344; }
   .kind-tag.model_group   { background:#5ab8a81a; color:#5ab8a8; border-color:#5ab8a844; }
   .kind-tag.config_group  { background:#b8a8781a; color:#b8a878; border-color:#b8a87844; }
@@ -2192,7 +2192,7 @@ var _searchTrie = null;
 var _searchActiveIndex = -1;
 
 var _KIND_ICONS = {
-  "class": "◼", "method": "◆", "metaclass": "◈",
+  "class": "◼", "method": "◆", "island_chain": "◈",
   "test_group": "⬡", "model_group": "⬡", "config_group": "⬡",
   "handler_group": "⬡", "utility_group": "⬡",
   "exception_group": "⬡", "event_group": "⬡"
@@ -2325,11 +2325,11 @@ function _setActiveSearchResult(index) {
 }
 
 /**
- * Find the chain of container (metaclass / group) nodes that must be
+ * Find the chain of container (island chain / group) nodes that must be
  * drilled into to reach `targetId`, starting from the root overview graph.
  *
  * Returns an array of node objects: [topLevelContainer, ..., immediateParent]
- * where each entry is a metaclass/group node whose member_ids include the
+ * where each entry is a island chain/group node whose member_ids include the
  * next entry (or the target itself for the last element).
  *
  * Returns [] if the target lives directly in the root graph (no drilling needed),
@@ -2343,9 +2343,9 @@ function _findContainerChain(targetId) {
     return [];
   }
 
-  // Build a lookup of ALL container nodes (metaclass / group) across every level
+  // Build a lookup of ALL container nodes (island chain / group) across every level
   var allContainers = [];  // { node, source }
-  var _containerKinds = new Set(["metaclass", "test_group", "model_group",
+  var _containerKinds = new Set(["island_chain", "test_group", "model_group",
     "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 
   rootGraphData.nodes.forEach(function(n) {
@@ -2666,7 +2666,7 @@ async function _loadPositionsFromDisk(nodeData) {
 const NODE_SIZE = {
   class: { w: 300, h: 210 },
   method: { w: 210, h: 150 },
-  metaclass: { w: 300, h: 210 },
+  island_chain: { w: 300, h: 210 },
   test_group:      { w: 240, h: 160 },
   model_group:     { w: 240, h: 160 },
   config_group:    { w: 240, h: 160 },
@@ -2676,7 +2676,7 @@ const NODE_SIZE = {
   event_group:     { w: 240, h: 160 },
 };
 const NODE_CHARGE = {
-  class: -1300, method: -650, metaclass: -1300,
+  class: -1300, method: -650, island_chain: -1300,
   test_group: -700, model_group: -700, config_group: -700,
   handler_group: -700, utility_group: -700,
   exception_group: -700, event_group: -700,
@@ -2783,14 +2783,14 @@ let currentGraphLabel = "Overview";
 let simulation = null;
 let selectedNode = null;
 
-const activeNodeKinds = new Set(["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+const activeNodeKinds = new Set(["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 const activeEdgeKinds = new Set(["inherits", "imports", "contains", "instantiates", "uses_type", "calls"]);
 
 // ── Legend metadata ────────────────────────────────────────────────
 const NODE_KIND_META = {
   class:           { label: "Class",                 border: "#6dbd4a", bg: "#6dbd4a22" },
   method:          { label: "Method",                border: "#e8a824", bg: "#e8a82422" },
-  metaclass:       { label: "Metaclass",             border: "#b8a878", bg: "#b8a87822" },
+  island_chain:       { label: "Island Chain",             border: "#b8a878", bg: "#b8a87822" },
   test_group:      { label: "Tests",                 border: "#4a8033", bg: "#4a803322" },
   model_group:     { label: "Data Models",           border: "#5ab8a8", bg: "#5ab8a822" },
   config_group:    { label: "Configuration",         border: "#8c8460", bg: "#8c846022" },
@@ -2799,7 +2799,7 @@ const NODE_KIND_META = {
   exception_group: { label: "Exceptions & Warnings", border: "#c4891a", bg: "#c4891a22" },
   event_group:     { label: "Events & Signals",      border: "#5a6348", bg: "#5a634822" },
 };
-const NODE_KIND_ORDER = ["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+const NODE_KIND_ORDER = ["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
 
 function updateLegend(graphData) {
   var legendEl = document.getElementById("legend");
@@ -3056,12 +3056,12 @@ function buildClassMethodGraph(classNode) {
   return { nodes, edges };
 }
 
-function buildMetaclassClassGraph(metaNode) {
-  // The member_ids list contains the IDs of the nodes this metaclass replaced.
-  // Those members may be classes, other metaclasses, or group nodes from any
+function buildIslandChainGraph(metaNode) {
+  // The member_ids list contains the IDs of the nodes this island chain replaced.
+  // Those members may be classes, other island chains, or group nodes from any
   // hierarchy level.  We look them up across all available data sources:
   //   1. fullGraphData     — original classes and methods
-  //   2. rootGraphData     — top-level metaclasses / groups
+  //   2. rootGraphData     — top-level island chains / groups
   //   3. intermediateGraphData — collapsed intermediate-level nodes
   const memberIds = new Set((metaNode.member_ids || []));
 
@@ -3071,7 +3071,7 @@ function buildMetaclassClassGraph(metaNode) {
   // Full graph has all original classes and methods
   fullGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
 
-  // Overview graph has top-level metaclasses
+  // Overview graph has top-level island chains
   rootGraphData.nodes.forEach(n => allAvailableNodes.set(n.id, n));
 
   // Intermediate graph has collapsed nodes from all hierarchy levels
@@ -3084,7 +3084,7 @@ function buildMetaclassClassGraph(metaNode) {
   });
 
   // If we found no nodes, the members might have been further collapsed.
-  // Try to find them by scanning all metaclasses for matching member_ids.
+  // Try to find them by scanning all island chains for matching member_ids.
   if (nodes.length === 0 && memberIds.size > 0) {
     // Fallback: look for any node whose id matches
     fullGraphData.nodes.forEach(n => {
@@ -3176,10 +3176,10 @@ function drillIntoNode(d) {
     _setGraphView(sub, `Class: ${d.name}`);
     return;
   }
-  if (d.kind === "metaclass") {
-    const sub = buildMetaclassClassGraph(d);
+  if (d.kind === "island_chain") {
+    const sub = buildIslandChainGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    _setGraphView(sub, `Metaclass: ${d.name}`);
+    _setGraphView(sub, `Island Chain: ${d.name}`);
     return;
   }
   if (_GROUP_KINDS.has(d.kind)) {
@@ -3476,7 +3476,7 @@ function gridLayout(nodeData, width, height) {
   // Lay out nodes in a simple grid centered in the viewport
   const count = nodeData.length;
   if (count === 0) return;
-  const cols = Math.max(1, Math.ceil(Math.sqrt(count * 1.4)));
+  const cols = Math.max(1, Math.ceil(Math.sqrt(count * 1.8)));
   const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
   const rowGap = count > 20 ? 260 : count > 12 ? 310 : GRID_SNAP_ROW_GAP;
   const rows = Math.ceil(count / cols);
@@ -3540,53 +3540,58 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoom
   const width = container.clientWidth;
   const height = container.clientHeight;
 
-  // Adaptive grid gaps: shrink for large node counts so the grid fits
-  const count = nodeData.length;
-  const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
-  const rowGap = count > 20 ? 260 : count > 12 ? 310 : GRID_SNAP_ROW_GAP;
-  const cols = Math.max(1, Math.ceil(Math.sqrt(nodeData.length * 1.4)));
-  const rows = Math.ceil(nodeData.length / cols);
-  const totalW = (cols - 1) * colGap;
-  const totalH = (rows - 1) * rowGap;
-  const centerX = width / 2;
-  const centerY = height / 2;
+  nodeData.forEach(n => { n.fx = null; n.fy = null; });
 
-  // Snap each node to its nearest grid cell (preserves simulation topology)
-  nodeData.forEach(n => {
-    n.fx = null;
-    n.fy = null;
-  });
+  // ── Separate connected vs edgeless nodes ─────────────────────────
+  const connectedIds = new Set();
+  if (linkData && linkData.length > 0) {
+    linkData.forEach(e => {
+      const s = typeof e.source === "object" ? e.source.id : e.source;
+      const t = typeof e.target === "object" ? e.target.id : e.target;
+      connectedIds.add(s); connectedIds.add(t);
+    });
+  }
+  const connectedNodes = nodeData.filter(n => connectedIds.has(n.id));
+  const edgelessNodes  = nodeData.filter(n => !connectedIds.has(n.id));
 
-  // ── Topology-aware compact placement ─────────────────────────────
-  // BFS from the highest-degree node, placing each node in the grid
-  // cell closest to its already-placed neighbours.  Vertical distance
-  // is penalised slightly more so the layout extends horizontally
-  // first.  This produces a compact, non-jagged starting layout for
-  // the global optimizer that follows.
-  const originX = centerX - totalW / 2;
-  const originY = centerY - totalH / 2;
-  {
-    // Build adjacency from edges
+  // ── Helper: compute grid dimensions (horizontal-biased) ──────────
+  function gridDims(count) {
+    const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
+    const rowGap = count > 20 ? 260 : count > 12 ? 310 : GRID_SNAP_ROW_GAP;
+    // Use higher aspect multiplier for stronger horizontal bias
+    const cols = Math.max(1, Math.ceil(Math.sqrt(count * 1.8)));
+    const rows = Math.max(1, Math.ceil(count / cols));
+    return { cols, rows, colGap, rowGap };
+  }
+
+  // ── Place connected nodes via BFS topology-aware placement ───────
+  const cCount = connectedNodes.length || 1;
+  const cGrid = gridDims(cCount);
+  const cTotalW = (cGrid.cols - 1) * cGrid.colGap;
+  const cTotalH = (cGrid.rows - 1) * cGrid.rowGap;
+  const cOriginX = width / 2 - cTotalW / 2;
+  const cOriginY = height / 2 - cTotalH / 2;
+
+  if (connectedNodes.length > 0) {
+    // Build adjacency
     const _adj = new Map();
     const _nodeById = new Map();
-    nodeData.forEach(n => { _adj.set(n.id, new Set()); _nodeById.set(n.id, n); });
-    if (linkData && linkData.length > 0) {
-      linkData.forEach(e => {
-        const s = typeof e.source === "object" ? e.source.id : e.source;
-        const t = typeof e.target === "object" ? e.target.id : e.target;
-        if (_adj.has(s)) _adj.get(s).add(t);
-        if (_adj.has(t)) _adj.get(t).add(s);
-      });
-    }
+    connectedNodes.forEach(n => { _adj.set(n.id, new Set()); _nodeById.set(n.id, n); });
+    linkData.forEach(e => {
+      const s = typeof e.source === "object" ? e.source.id : e.source;
+      const t = typeof e.target === "object" ? e.target.id : e.target;
+      if (_adj.has(s)) _adj.get(s).add(t);
+      if (_adj.has(t)) _adj.get(t).add(s);
+    });
     const _deg = new Map();
-    nodeData.forEach(n => _deg.set(n.id, _adj.get(n.id)?.size || 0));
+    connectedNodes.forEach(n => _deg.set(n.id, _adj.get(n.id)?.size || 0));
 
-    // BFS ordering: start from highest degree, then each component
+    // BFS ordering
     const _bfs = [];
     const _vis = new Set();
-    while (_vis.size < nodeData.length) {
+    while (_vis.size < connectedNodes.length) {
       let best = null, bestD = -1;
-      for (const n of nodeData) {
+      for (const n of connectedNodes) {
         if (!_vis.has(n.id) && (_deg.get(n.id) || 0) > bestD) {
           bestD = _deg.get(n.id) || 0; best = n;
         }
@@ -3596,43 +3601,39 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoom
       while (q.length > 0) {
         const cur = q.shift();
         _bfs.push(cur);
-        // Visit neighbours sorted by degree (highest first) for stability
         const nbrs = [...(_adj.get(cur.id) || [])].sort(
           (a, b) => (_deg.get(b) || 0) - (_deg.get(a) || 0)
         );
         for (const nid of nbrs) {
-          if (!_vis.has(nid)) {
-            _vis.add(nid);
-            const nb = _nodeById.get(nid);
-            if (nb) q.push(nb);
-          }
+          if (!_vis.has(nid)) { _vis.add(nid); const nb = _nodeById.get(nid); if (nb) q.push(nb); }
         }
       }
     }
 
-    // Generate grid cell positions
+    // Grid cells for connected nodes
     const _cells = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        _cells.push({ x: originX + c * colGap, y: originY + r * rowGap });
+    for (let r = 0; r < cGrid.rows; r++) {
+      for (let c = 0; c < cGrid.cols; c++) {
+        _cells.push({ x: cOriginX + c * cGrid.colGap, y: cOriginY + r * cGrid.rowGap });
       }
     }
-    // Overflow rows if needed
-    while (_cells.length < nodeData.length) {
-      const r = Math.floor(_cells.length / cols);
-      const c = _cells.length % cols;
-      _cells.push({ x: originX + c * colGap, y: originY + r * rowGap });
+    while (_cells.length < connectedNodes.length) {
+      const r = Math.floor(_cells.length / cGrid.cols);
+      const c = _cells.length % cGrid.cols;
+      _cells.push({ x: cOriginX + c * cGrid.colGap, y: cOriginY + r * cGrid.rowGap });
     }
 
     const _used = new Set();
-    const _placedPos = new Map(); // nodeId → { x, y }
-    const _midCell = _cells[Math.min(
-      Math.floor(rows / 2) * cols + Math.floor(cols / 2),
+    const _placedPos = new Map();
+    // Place first node at center of grid
+    const midIdx = Math.min(
+      Math.floor(cGrid.rows / 2) * cGrid.cols + Math.floor(cGrid.cols / 2),
       _cells.length - 1
-    )];
+    );
+    const _midCell = _cells[midIdx];
 
+    // Row-major index as tiebreaker: prefer top-left cells when costs are equal
     _bfs.forEach(n => {
-      // Neighbours that have already been placed
       const nbrs = [...(_adj.get(n.id) || [])]
         .filter(nid => _placedPos.has(nid))
         .map(nid => _placedPos.get(nid));
@@ -3643,16 +3644,15 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoom
         const cell = _cells[ci];
         let cost;
         if (nbrs.length > 0) {
-          // Manhattan distance to placed neighbours, penalise vertical more
           cost = 0;
           for (const p of nbrs) {
-            cost += Math.abs(cell.x - p.x) + Math.abs(cell.y - p.y) * 1.35;
+            cost += Math.abs(cell.x - p.x) + Math.abs(cell.y - p.y) * 1.5;
           }
         } else {
-          // No placed neighbours → prefer centre of grid
-          cost = Math.abs(cell.x - _midCell.x)
-               + Math.abs(cell.y - _midCell.y) * 1.35;
+          cost = Math.abs(cell.x - _midCell.x) + Math.abs(cell.y - _midCell.y) * 1.5;
         }
+        // Tiny row-major tiebreaker so equal costs prefer top-left (horizontal first)
+        cost += ci * 0.001;
         if (cost < bestCost) { bestCost = cost; bestIdx = ci; }
       }
       if (bestIdx >= 0) {
@@ -3664,9 +3664,31 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoom
     });
   }
 
-  // Resolve edge-through-node collisions by swapping / relocating nodes
-  if (linkData && linkData.length > 0) {
-    resolveEdgeNodeCollisions(nodeData, linkData, colGap, rowGap);
+  // ── Place edgeless nodes in a row-major grid BELOW connected nodes ──
+  if (edgelessNodes.length > 0) {
+    const eGrid = gridDims(edgelessNodes.length);
+    const eTotalW = (eGrid.cols - 1) * eGrid.colGap;
+
+    // Compute bottom of connected region
+    let maxConnectedY = cOriginY;
+    if (connectedNodes.length > 0) {
+      connectedNodes.forEach(n => { if (n.y > maxConnectedY) maxConnectedY = n.y; });
+    }
+    const eOriginY = maxConnectedY + ISOLATED_ROW_Y_OFFSET;
+    const eOriginX = width / 2 - eTotalW / 2;
+
+    // Strict row-major fill: left-to-right, top-to-bottom
+    edgelessNodes.forEach((n, i) => {
+      const col = i % eGrid.cols;
+      const row = Math.floor(i / eGrid.cols);
+      n.x = eOriginX + col * eGrid.colGap;
+      n.y = eOriginY + row * eGrid.rowGap;
+    });
+  }
+
+  // ── Resolve edge-through-node collisions (connected nodes only) ──
+  if (linkData && linkData.length > 0 && connectedNodes.length > 1) {
+    resolveEdgeNodeCollisions(connectedNodes, linkData, cGrid.colGap, cGrid.rowGap);
   }
 
   node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
@@ -3833,7 +3855,7 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   // Add clickable/hoverable node hit-layer in detail view (bottom): hover highlights, click drills
   const hitLayer = zoomG.append("g").attr("class", "detail-hit-layer");
 
-  const SCROLLABLE_KINDS = ["class", "method", "metaclass", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+  const SCROLLABLE_KINDS = ["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
   const HEADER_H = 38; // height of the title+kind header area above the scrollable content
 
   const hitGroups = hitLayer.selectAll("g")
@@ -4148,7 +4170,7 @@ function renderGraph() {
     centerDetailOnGraphPoint(d.x, d.y, true);
   }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
 
-  const metaFo = node.filter(d => d.kind === "metaclass")
+  const metaFo = node.filter(d => d.kind === "island_chain")
     .append("foreignObject").attr("class","node-methods-fo")
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
@@ -4370,7 +4392,7 @@ function renderGraph() {
 var _ctxMenuNode = null;        // the node data object the menu was opened for
 var _inspectorPinned = false;   // when true, hover won't overwrite the inspector
 
-var _DRILLABLE_KINDS = new Set(["class", "metaclass", "test_group", "model_group",
+var _DRILLABLE_KINDS = new Set(["class", "island_chain", "test_group", "model_group",
   "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
 
 function _canDrill(d) {
@@ -4381,7 +4403,7 @@ function _canDrill(d) {
 }
 
 function _hasSourceFile(d) {
-  // Metaclass / group nodes set file_path to a directory (no extension) and line_start=0.
+  // Island Chain / group nodes set file_path to a directory (no extension) and line_start=0.
   // Only enable "View Code" when the path looks like an actual file.
   if (!d.file_path) return false;
   // Must contain a dot (file extension) somewhere in the basename
