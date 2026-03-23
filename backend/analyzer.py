@@ -129,7 +129,8 @@ class Node:
     line_end: int
     methods: list[str] = field(default_factory=list)
     variables: list[dict] = field(default_factory=list)    # [{"name": ..., "type": ...}, ...]
-    members: list[str] = field(default_factory=list)      # for island chain nodes
+    members: list[str] = field(default_factory=list)      # for island chain nodes (class names)
+    member_methods: list[str] = field(default_factory=list) # for island chain nodes (method/function names)
     member_ids: list[str] = field(default_factory=list)   # for island chain drilldown
     bases: list[str] = field(default_factory=list)
     docstring: Optional[str] = None
@@ -1611,7 +1612,9 @@ def _collapse_communities(
         meta_id = _make_id("__meta__", f"community::{'|'.join(sorted_ids)}")
 
         member_nodes = [node_by_id[nid] for nid in sorted_ids if nid in node_by_id]
-        member_names = sorted(n.name for n in member_nodes)
+        member_class_names = sorted(n.name for n in member_nodes if n.kind != NodeKind.METHOD)
+        member_method_names = sorted(n.name for n in member_nodes if n.kind == NodeKind.METHOD)
+        member_names = member_class_names + member_method_names
 
         # Derive a meaningful name from common path or member names
         file_paths = set(n.file_path for n in member_nodes if n.file_path)
@@ -1657,7 +1660,8 @@ def _collapse_communities(
             file_path=common_dir,
             line_start=0,
             line_end=0,
-            members=member_names,
+            members=member_class_names,
+            member_methods=member_method_names,
             member_ids=sorted_ids,
             docstring=docstring,
             depth=depth,
@@ -2047,14 +2051,16 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
         meta_id = _make_id("__heuristic__", f"{category}::{stem}::{'|'.join(sorted_ids)}")
 
         member_nodes = [node_by_id[nid] for nid in sorted_ids if nid in node_by_id]
-        member_names = sorted(n.name for n in member_nodes)
+        member_class_names = sorted(n.name for n in member_nodes if n.kind != NodeKind.METHOD)
+        member_method_names = sorted(n.name for n in member_nodes if n.kind == NodeKind.METHOD)
+        all_member_names = member_class_names + member_method_names
         file_paths = set(n.file_path for n in member_nodes if n.file_path)
         common_dir = _safe_common_dir(file_paths)
 
         if category == "file":
             kind = NodeKind.ISLAND_CHAIN
             label = stem or "module"
-            name = f"{label} ({len(member_names)})"
+            name = f"{label} ({len(all_member_names)})"
             docstring = f"Nodes from {stem}.py grouped by co-location"
         else:
             kind = _CATEGORY_KIND[category]
@@ -2062,9 +2068,9 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
             # Include file stem when multiple files contribute to a category
             same_cat_groups = [(c, s, i) for (c, s, i) in final_groups if c == category]
             if len(same_cat_groups) > 1:
-                name = f"{base_label} — {stem} ({len(member_names)})"
+                name = f"{base_label} — {stem} ({len(all_member_names)})"
             else:
-                name = f"{base_label} ({len(member_names)})"
+                name = f"{base_label} ({len(all_member_names)})"
             docstring = f"Heuristically grouped by naming conventions: {base_label}"
 
         group_node = Node(
@@ -2075,7 +2081,8 @@ def _collapse_all_by_heuristic(graph: Graph, min_group_size: int = 2) -> Graph:
             file_path=common_dir,
             line_start=0,
             line_end=0,
-            members=member_names,
+            members=member_class_names,
+            member_methods=member_method_names,
             member_ids=sorted_ids,
             docstring=docstring,
             depth=0,

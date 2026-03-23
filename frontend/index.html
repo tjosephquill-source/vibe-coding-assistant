@@ -1973,6 +1973,7 @@ function _buildNodeContext(d) {
   if (d.docstring) parts.push('Docstring: ' + d.docstring);
   if (d.methods && d.methods.length > 0) parts.push('Methods (' + d.methods.length + '): ' + d.methods.slice(0, 15).join(', ') + (d.methods.length > 15 ? '…' : ''));
   if (d.members && d.members.length > 0) parts.push('Grouped classes (' + d.members.length + '): ' + d.members.slice(0, 15).join(', ') + (d.members.length > 15 ? '…' : ''));
+  if (d.member_methods && d.member_methods.length > 0) parts.push('Grouped methods (' + d.member_methods.length + '): ' + d.member_methods.slice(0, 15).join(', ') + (d.member_methods.length > 15 ? '…' : ''));
 
   // Add relationship info from current graph
   if (graphData && graphData.edges) {
@@ -2216,7 +2217,7 @@ function buildSearchIndex() {
       qualified_name: n.qualified_name || '',
       file_path: n.file_path || '',
       line_start: n.line_start, line_end: n.line_end,
-      methods: n.methods, members: n.members, member_ids: n.member_ids,
+      methods: n.methods, members: n.members, member_methods: n.member_methods, member_ids: n.member_ids,
       bases: n.bases, docstring: n.docstring,
       // Store references for navigation
       _node: n
@@ -4174,7 +4175,7 @@ function renderGraph() {
     .append("foreignObject").attr("class","node-methods-fo")
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
-    .html(d=>{const members=(d.members||[]).map(m=>`<div>${m}</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Classes (${(d.members||[]).length})</div><div class="node-methods-scroll">${members||"<div>(none)</div>"}</div></div>`;});
+    .html(d=>{const classes=(d.members||[]).map(m=>`<div>${m}</div>`).join("");const methods=(d.member_methods||[]).map(m=>`<div>${m}()</div>`).join("");let body="";if(classes)body+=`<div class="node-methods-label">Classes (${(d.members||[]).length})</div><div class="node-methods-scroll">${classes}</div>`;if(methods)body+=(classes?'':'')+`<div class="node-methods-label">Methods (${(d.member_methods||[]).length})</div><div class="node-methods-scroll">${methods}</div>`;if(!body)body='<div>(none)</div>';return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">${body}</div>`;});
   metaFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
     .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click",function(event,d){
@@ -4187,7 +4188,7 @@ function renderGraph() {
     .append("foreignObject").attr("class","node-methods-fo")
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
-    .html(d=>{const members=(d.members||[]).map(m=>`<div>${m}</div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-methods-label">Members (${(d.members||[]).length})</div><div class="node-methods-scroll">${members||"<div>(none)</div>"}</div></div>`;});
+    .html(d=>{const classes=(d.members||[]).map(m=>`<div>${m}</div>`).join("");const methods=(d.member_methods||[]).map(m=>`<div>${m}()</div>`).join("");let body="";if(classes)body+=`<div class="node-methods-label">Members (${(d.members||[]).length})</div><div class="node-methods-scroll">${classes}</div>`;if(methods)body+=`<div class="node-methods-label">Methods (${(d.member_methods||[]).length})</div><div class="node-methods-scroll">${methods}</div>`;if(!body)body='<div>(none)</div>';return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">${body}</div>`;});
   groupFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
     .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click",function(event,d){
@@ -4543,6 +4544,7 @@ function selectNode(d) {
   if (d.variables && d.variables.length > 0) { html += `<div class="detail-section"><h3>Variables (${d.variables.length})</h3><ul class="methods-list">${d.variables.map(v => `<li>${v.name}<span class="var-type">: ${v.type}</span></li>`).join("")}</ul></div>`; }
   if (d.methods && d.methods.length > 0) { html += `<div class="detail-section"><h3>Methods (${d.methods.length})</h3><ul class="methods-list">${d.methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (d.members && d.members.length > 0) { html += `<div class="detail-section"><h3>Grouped Classes (${d.members.length})</h3><ul class="methods-list">${d.members.map(m => `<li>${m}</li>`).join("")}</ul></div>`; }
+  if (d.member_methods && d.member_methods.length > 0) { html += `<div class="detail-section"><h3>Grouped Methods (${d.member_methods.length})</h3><ul class="methods-list">${d.member_methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (outgoing.length > 0) { html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div><span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> → ${findNodeName(e.target)}</li>`).join("")}</ul></div>`; }
   if (incoming.length > 0) { html += `<div class="detail-section"><h3>Incoming (${incoming.length})</h3><ul class="rel-list">${incoming.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div>${findNodeName(e.source)} <span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> →</li>`).join("")}</ul></div>`; }
   content.innerHTML = html;
@@ -4567,6 +4569,7 @@ function populatePanel(d) {
   if (d.variables && d.variables.length > 0) { html += `<div class="detail-section"><h3>Variables (${d.variables.length})</h3><ul class="methods-list">${d.variables.map(v => `<li>${v.name}<span class="var-type">: ${v.type}</span></li>`).join("")}</ul></div>`; }
   if (d.methods && d.methods.length > 0) { html += `<div class="detail-section"><h3>Methods (${d.methods.length})</h3><ul class="methods-list">${d.methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (d.members && d.members.length > 0) { html += `<div class="detail-section"><h3>Grouped Classes (${d.members.length})</h3><ul class="methods-list">${d.members.map(m => `<li>${m}</li>`).join("")}</ul></div>`; }
+  if (d.member_methods && d.member_methods.length > 0) { html += `<div class="detail-section"><h3>Grouped Methods (${d.member_methods.length})</h3><ul class="methods-list">${d.member_methods.map(m => `<li>${m}()</li>`).join("")}</ul></div>`; }
   if (outgoing.length > 0) { html += `<div class="detail-section"><h3>Outgoing (${outgoing.length})</h3><ul class="rel-list">${outgoing.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div><span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> → ${findNodeName(e.target)}</li>`).join("")}</ul></div>`; }
   if (incoming.length > 0) { html += `<div class="detail-section"><h3>Incoming (${incoming.length})</h3><ul class="rel-list">${incoming.map(e => `<li><div class="rel-dot" style="background:${edgeColor[e.kind] || '#8b949e'}"></div>${findNodeName(e.source)} <span style="color:${edgeColor[e.kind] || '#8b949e'}">${e.kind}</span> →</li>`).join("")}</ul></div>`; }
   content.innerHTML = html;
@@ -4626,6 +4629,7 @@ function _showNodeDesc(d) {
     line_end: d.line_end || 0,
   };
   if (d.members && d.members.length > 0) body.members = d.members;
+  if (d.member_methods && d.member_methods.length > 0) body.member_methods = d.member_methods;
 
   fetch(API_BASE + '/api/node-description', {
     method: 'POST',
