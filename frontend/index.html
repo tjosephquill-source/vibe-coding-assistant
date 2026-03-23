@@ -1134,6 +1134,7 @@ PanelRegistry.register({
     content.innerHTML = '<div id="node-desc-bar" class="empty"><span class="desc-placeholder">Hover over a node to see its description</span></div>';
     // Scale font size relative to the panel dimensions
     _nodeDescResizeObserver(content);
+    if (graphData) setTimeout(_showGraphOverviewDesc, 0);
   },
 });
 
@@ -3105,6 +3106,7 @@ function _setGraphView(nextGraph, label) {
   var dp = document.getElementById("detail-panel");
   if (dp) dp.classList.remove("open");
   renderGraph();
+  _showGraphOverviewDesc();
 }
 
 function buildClassMethodGraph(classNode) {
@@ -4687,8 +4689,9 @@ let _nodeDescAbort = null;   // current AbortController
 let _nodeDescHoverId = null; // node ID currently being described
 
 function _contentHashForNode(d) {
-  // Simple hash from node identity + code location
+  // Simple hash from node identity + code location + membership
   var raw = (d.file_path || '') + ':' + (d.line_start || 0) + ':' + (d.line_end || 0) + ':' + d.name;
+  if (d.members && d.members.length > 0) raw += ':' + d.members.join(',');
   // FNV-1a-ish quick hash
   var h = 0x811c9dc5;
   for (var i = 0; i < raw.length; i++) { h ^= raw.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -4735,6 +4738,7 @@ function _showNodeDesc(d) {
   };
   if (d.members && d.members.length > 0) body.members = d.members;
   if (d.member_methods && d.member_methods.length > 0) body.member_methods = d.member_methods;
+  if (d._edges_summary) body.edges_summary = d._edges_summary;
 
   fetch(API_BASE + '/api/node-description', {
     method: 'POST',
@@ -4765,11 +4769,56 @@ function _showNodeDesc(d) {
 function _hideNodeDesc() {
   _nodeDescHoverId = null;
   if (_nodeDescAbort) { _nodeDescAbort.abort(); _nodeDescAbort = null; }
+  _showGraphOverviewDesc();
+}
+
+/** Show a description of the current graph view (when no node is hovered). */
+function _showGraphOverviewDesc() {
   var bar = document.getElementById('node-desc-bar');
-  if (bar) {
+  if (!bar) return;
+
+  if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
     bar.className = 'empty';
-    bar.innerHTML = '<span class="desc-placeholder">Hover over a node to see its description</span>';
+    bar.innerHTML = '<span class="desc-placeholder">No graph loaded</span>';
+    return;
   }
+
+  var nodes = graphData.nodes;
+  var edges = graphData.edges || [];
+  var label = currentGraphLabel || 'Overview';
+
+  // Separate class-like nodes from methods for the members list
+  var classLike = nodes.filter(function(n) { return n.kind !== 'method'; });
+  var methods = nodes.filter(function(n) { return n.kind === 'method'; });
+  var memberNames = classLike.map(function(n) { return n.name; });
+  var methodNames = methods.map(function(n) { return n.name; });
+
+  // Build edge summary string
+  var edgeKindCounts = {};
+  edges.forEach(function(e) {
+    var k = (e.kind || 'unknown').replace(/_/g, ' ');
+    edgeKindCounts[k] = (edgeKindCounts[k] || 0) + 1;
+  });
+  var edgeParts = [];
+  Object.keys(edgeKindCounts).forEach(function(k) {
+    edgeParts.push(edgeKindCounts[k] + ' ' + k);
+  });
+  var edgeSummary = edgeParts.join(', ');
+
+  // Build a virtual node representing the current graph view
+  var virtualNode = {
+    id: '__graph_overview__' + label,
+    name: label,
+    kind: 'graph_overview',
+    file_path: '',
+    line_start: 0,
+    line_end: 0,
+    members: memberNames.slice(0, 30),
+    member_methods: methodNames.slice(0, 20),
+    _edges_summary: edgeSummary
+  };
+
+  _showNodeDesc(virtualNode);
 }
 
 /** Shrink the font size of #node-desc-bar until its content fits without overflow.

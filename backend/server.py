@@ -494,6 +494,8 @@ async def node_description(request: Request):
     line_start = body.get("line_start", 0)
     line_end = body.get("line_end", 0)
     members = body.get("members")  # for island chain / group nodes
+    member_methods = body.get("member_methods")  # loose functions
+    edges_summary = body.get("edges_summary", "")  # for graph overview
 
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
@@ -521,7 +523,10 @@ async def node_description(request: Request):
     if snippet:
         content_hash = hashlib.md5(snippet.encode()).hexdigest()[:16]
     elif members:
-        content_hash = hashlib.md5(json.dumps(members, sort_keys=True).encode()).hexdigest()[:16]
+        hash_input = json.dumps(members, sort_keys=True)
+        if edges_summary:
+            hash_input += "|" + edges_summary
+        content_hash = hashlib.md5(hash_input.encode()).hexdigest()[:16]
     else:
         content_hash = hashlib.md5(f"{node_name}:{node_kind}".encode()).hexdigest()[:16]
 
@@ -537,6 +542,19 @@ async def node_description(request: Request):
             f"Describe the purpose of this {node_kind} named '{node_name}' in 1-2 brief sentences. "
             f"Focus on what it does and its role in the codebase. Be concise.\n\n```\n{snippet}\n```"
         )
+    elif node_kind == "graph_overview":
+        parts = [f"This is an architecture graph view called '{node_name}'."]
+        if members:
+            parts.append(f"It contains these components: {', '.join(members[:30])}.")
+        if member_methods:
+            parts.append(f"It also includes these functions: {', '.join(member_methods[:20])}.")
+        if edges_summary:
+            parts.append(f"Relationships between components: {edges_summary}.")
+        parts.append(
+            "Describe the overall architecture and purpose of this part of the codebase "
+            "in 2-3 brief sentences. Focus on what these components do together and how they relate."
+        )
+        user_msg = " ".join(parts)
     elif members:
         user_msg = (
             f"This is a '{node_kind}' group node named '{node_name}' that contains these members: "
@@ -553,13 +571,19 @@ async def node_description(request: Request):
     client = AsyncOpenAI(api_key=api_key)
 
     try:
+        max_tokens = 180 if node_kind == "graph_overview" else 120
+        system_msg = (
+            "You are a concise code documentation assistant. "
+            "Respond with a brief description of the given code element or architecture. "
+            "No markdown, no bullet points."
+        )
         resp = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a concise code documentation assistant. Respond with exactly 1-2 sentences describing the purpose of the given code element. No markdown, no bullet points."},
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
-            max_completion_tokens=120,
+            max_completion_tokens=max_tokens,
             temperature=0.3,
         )
         description = resp.choices[0].message.content.strip()
