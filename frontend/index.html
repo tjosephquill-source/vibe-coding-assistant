@@ -2728,7 +2728,7 @@ function _appendLangIcons(nodeSelection) {
     const h = (NODE_SIZE[d.kind]?.h || 60);
     const r = _LANG_ICON_R;
     const startX = w / 2 - r - 4;             // right edge inset
-    const startY = -h / 2 + r + 4;            // top edge inset
+    const startY = h / 2 - r - 4;             // bottom edge inset
 
     langs.forEach(function(lang, i) {
       const def = _LANG_ICON[lang];
@@ -3391,6 +3391,11 @@ function fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, padding,
 function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
   if (!nodeData || nodeData.length === 0) return;
 
+  const container = document.getElementById("graph-container");
+  if (!container) return;
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
   // Adaptive grid gaps: shrink for large node counts so the grid fits
   const count = nodeData.length;
   const colGap = count > 20 ? 340 : count > 12 ? 420 : GRID_SNAP_COL_GAP;
@@ -3415,9 +3420,7 @@ function snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel) {
   link.attr("d", edgePath);
     edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
   // Fit immediately (no animation) then animate a refined fit
-  const container = document.getElementById("graph-container");
-  if (!container) return;
-  fitGraphToViewport(svg, zoomBehavior, nodeData, container.clientWidth, container.clientHeight, 20, false);
+  fitGraphToViewport(svg, zoomBehavior, nodeData, width, height, 20, false);
   setTimeout(function() {
     const c = document.getElementById("graph-container");
     if (!c) return;
