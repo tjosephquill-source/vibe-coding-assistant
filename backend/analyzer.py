@@ -100,13 +100,7 @@ class NodeKind(str, Enum):
     CLASS = "class"
     METHOD = "method"
     ISLAND_CHAIN = "island_chain"
-    TEST_GROUP = "test_group"
-    MODEL_GROUP = "model_group"
-    CONFIG_GROUP = "config_group"
-    HANDLER_GROUP = "handler_group"
-    UTILITY_GROUP = "utility_group"
-    EXCEPTION_GROUP = "exception_group"
-    EVENT_GROUP = "event_group"
+    GROUP = "group"
 
 
 class EdgeKind(str, Enum):
@@ -189,7 +183,7 @@ def _enrich_languages(graph_dict: dict) -> None:
     """Add a ``languages`` list to every node dict.
 
     For leaf nodes the language is derived from the file extension.
-    For container nodes (island chain / *_group) the languages are the
+    For container nodes (island chain / group) the languages are the
     union of their members' languages, resolved recursively.
     """
     by_id: dict[str, dict] = {}
@@ -1846,13 +1840,13 @@ def _find_loose_node_ids(graph: Graph) -> set[str]:
 # ── Category maps ───────────────────────────────────────────────────
 
 _CATEGORY_KIND: dict[str, NodeKind] = {
-    "test":      NodeKind.TEST_GROUP,
-    "model":     NodeKind.MODEL_GROUP,
-    "config":    NodeKind.CONFIG_GROUP,
-    "handler":   NodeKind.HANDLER_GROUP,
-    "utility":   NodeKind.UTILITY_GROUP,
-    "exception": NodeKind.EXCEPTION_GROUP,
-    "event":     NodeKind.EVENT_GROUP,
+    "test":      NodeKind.GROUP,
+    "model":     NodeKind.GROUP,
+    "config":    NodeKind.GROUP,
+    "handler":   NodeKind.GROUP,
+    "utility":   NodeKind.GROUP,
+    "exception": NodeKind.GROUP,
+    "event":     NodeKind.GROUP,
 }
 
 _CATEGORY_LABEL: dict[str, str] = {
@@ -1866,20 +1860,12 @@ _CATEGORY_LABEL: dict[str, str] = {
 }
 
 # Kinds that represent groups/island chains (eligible for higher-level grouping)
-_GROUPABLE_META_KINDS: set[NodeKind] = {NodeKind.ISLAND_CHAIN} | {
-    k for k in NodeKind if k.value.endswith("_group")
-}
+_GROUPABLE_META_KINDS: set[NodeKind] = {NodeKind.ISLAND_CHAIN, NodeKind.GROUP}
 
 # Human-readable label for each group kind (used when naming higher-level groups)
 _GROUP_KIND_LABEL: dict[NodeKind, str] = {
-    NodeKind.TEST_GROUP:      "Tests",
-    NodeKind.MODEL_GROUP:     "Data Models",
-    NodeKind.CONFIG_GROUP:    "Configuration",
-    NodeKind.HANDLER_GROUP:   "Services & Handlers",
-    NodeKind.UTILITY_GROUP:   "Utilities",
-    NodeKind.EXCEPTION_GROUP: "Exceptions & Warnings",
-    NodeKind.EVENT_GROUP:     "Events & Signals",
-    NodeKind.ISLAND_CHAIN:       "Groups",
+    NodeKind.GROUP:         "Groups",
+    NodeKind.ISLAND_CHAIN:  "Groups",
 }
 
 
@@ -2219,11 +2205,11 @@ def _find_metanode_groups(
     min_group_size: int = 3,
 ) -> list[set[str]]:
     """
-    Find groups of metanodes / *_group nodes that can be collapsed into
+    Find groups of metanodes / group nodes that can be collapsed into
     higher-level island chain nodes.
 
     Grouping strategies (applied in priority order):
-    1. Same kind  (e.g. all test_group → "All Tests")
+    1. Same kind  (e.g. all group → "All Groups")
     2. Same parent directory for remaining ungrouped metanodes
 
     After each strategy, groups are split into their connected sub-components
@@ -2335,9 +2321,7 @@ def abstract_graph(
     current = _collapse_all_by_heuristic(graph)
 
     # Node kinds eligible for further community-based collapsing
-    _GROUPABLE_KINDS = {NodeKind.CLASS, NodeKind.ISLAND_CHAIN} | {
-        k for k in NodeKind if k.value.endswith("_group")
-    }
+    _GROUPABLE_KINDS = {NodeKind.CLASS, NodeKind.ISLAND_CHAIN, NodeKind.GROUP}
 
     depth = 0
 

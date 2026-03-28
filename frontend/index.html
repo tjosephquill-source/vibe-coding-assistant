@@ -366,14 +366,7 @@
   .node-rect.class  { fill:#1a2610; stroke:#6dbd4a; }
   .node-rect.method { fill:#1a1408; stroke:#e8a824; }
   .node-rect.island_chain { fill:#201a08; stroke:#b8a878; }
-  .node-rect.test_group { fill:#0e1a0a; stroke:#4a8033; }
-  .node-rect.model_group { fill:#0e1a18; stroke:#5ab8a8; }
-  .node-rect.config_group { fill:#18160e; stroke:#8c8460; }
-  .node-rect.handler_group { fill:#1a100e; stroke:#d44a32; }
-  .node-rect.utility_group { fill:#141a0e; stroke:#6dbd4a; }
-  .node-rect.exception_group { fill:#1a150a; stroke:#c4891a; }
-  .node-rect.event_group { fill:#14180e; stroke:#5a6348; }
-  .node-rect.semantic_group { fill:#14180e; stroke:#5a6348; }
+  .node-rect.group { fill:#14180e; stroke:#8c8460; }
 
   .node-rect.node-focused {
     filter:brightness(1.35) drop-shadow(0 0 12px rgba(232,168,36,.55));
@@ -431,13 +424,7 @@
   .kind-tag.class    { background:#6dbd4a1a; color:#6dbd4a; border-color:#6dbd4a44; }
   .kind-tag.method   { background:#e8a8241a; color:#e8a824; border-color:#e8a82444; }
   .kind-tag.island_chain { background:#b8a8781a; color:#b8a878; border-color:#b8a87844; }
-  .kind-tag.test_group    { background:#4a80331a; color:#4a8033; border-color:#4a803344; }
-  .kind-tag.model_group   { background:#5ab8a81a; color:#5ab8a8; border-color:#5ab8a844; }
-  .kind-tag.config_group  { background:#b8a8781a; color:#b8a878; border-color:#b8a87844; }
-  .kind-tag.handler_group { background:#d44a321a; color:#d44a32; border-color:#d44a3244; }
-  .kind-tag.utility_group { background:#6dbd4a1a; color:#6dbd4a; border-color:#6dbd4a44; }
-  .kind-tag.exception_group { background:#c4891a1a; color:#c4891a; border-color:#c4891a44; }
-  .kind-tag.event_group { background:#5a63481a; color:#5a6348; border-color:#5a634844; }
+  .kind-tag.group    { background:#8c84601a; color:#8c8460; border-color:#8c846044; }
 
   #detail-panel .detail-section { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
   #detail-panel .detail-section h3 {
@@ -2466,8 +2453,7 @@ function _findContainerChain(targetId) {
 
   // Build a lookup of ALL container nodes (island chain / group) across every level
   var allContainers = [];  // { node, source }
-  var _containerKinds = new Set(["island_chain", "test_group", "model_group",
-    "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+  var _containerKinds = new Set(["island_chain", "group"]);
 
   rootGraphData.nodes.forEach(function(n) {
     if (_containerKinds.has(n.kind) && n.member_ids && n.member_ids.length > 0) {
@@ -2788,19 +2774,11 @@ const NODE_SIZE = {
   class: { w: 300, h: 210 },
   method: { w: 210, h: 150 },
   island_chain: { w: 300, h: 210 },
-  test_group:      { w: 240, h: 160 },
-  model_group:     { w: 240, h: 160 },
-  config_group:    { w: 240, h: 160 },
-  handler_group:   { w: 240, h: 160 },
-  utility_group:   { w: 240, h: 160 },
-  exception_group: { w: 240, h: 160 },
-  event_group:     { w: 240, h: 160 },
+  group: { w: 240, h: 160 },
 };
 const NODE_CHARGE = {
   class: -1300, method: -650, island_chain: -1300,
-  test_group: -700, model_group: -700, config_group: -700,
-  handler_group: -700, utility_group: -700,
-  exception_group: -700, event_group: -700,
+  group: -700,
 };
 const EDGE_DISTANCE = {
   contains: 130,
@@ -2904,24 +2882,18 @@ let currentGraphLabel = "Overview";
 let simulation = null;
 let selectedNode = null;
 
-const activeNodeKinds = new Set(["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+const activeNodeKinds = new Set(["class", "method", "island_chain", "group"]);
 const activeEdgeKinds = new Set(["inherits", "imports", "contains", "instantiates", "uses_type", "calls"]);
 
 // ── Legend metadata ────────────────────────────────────────────────
 const NODE_KIND_META = {
-  class:           { label: "Class",                 icon: "🎓", border: "#6dbd4a", bg: "#6dbd4a22", desc: "A class definition — a blueprint for objects with attributes and methods." },
-  method:          { label: "Function",              icon: "ƒ",  border: "#e8a824", bg: "#e8a82422", desc: "A standalone function or method — a callable unit of logic." },
-  island_chain:    { label: "Island Chain",          icon: "🏝", border: "#b8a878", bg: "#b8a87822", desc: "A group of loosely connected nodes forming an isolated cluster with no links to the main graph." },
-  test_group:      { label: "Tests",                 icon: "🐞", border: "#4a8033", bg: "#4a803322", desc: "Test suites and test cases that verify code behavior." },
-  model_group:     { label: "Data Models",           icon: "⛁️️️️️",  border: "#5ab8a8", bg: "#5ab8a822", desc: "Data models, schemas, and entity definitions that represent the structure of your data." },
-  config_group:    { label: "Configuration",         icon: "⚙️", border: "#8c8460", bg: "#8c846022", desc: "Configuration files, settings, and environment definitions." },
-  handler_group:   { label: "Services & Handlers",   icon: "☁️", border: "#d44a32", bg: "#d44a3222", desc: "Service classes, request handlers, and API endpoints that process incoming work." },
-  utility_group:   { label: "Utilities",             icon: "🛠", border: "#6dbd4a", bg: "#6dbd4a22", desc: "Utility functions and helper classes used across the codebase." },
-  exception_group: { label: "Exceptions & Warnings", icon: "⚠️", border: "#c4891a", bg: "#c4891a22", desc: "Custom exception classes and warning definitions for error handling." },
-  event_group:     { label: "Events & Signals",      icon: "📡", border: "#5a6348", bg: "#5a634822", desc: "Event emitters, signal handlers, and pub/sub patterns." },
-  graph_overview:  { label: "Graph Overview",        icon: "🗂️", border: "#b8a878", bg: "#b8a87822", desc: "A high-level overview node representing the entire graph." },
+  class:           { label: "Class",         icon: "🎓", border: "#6dbd4a", bg: "#6dbd4a22", desc: "A class definition — a blueprint for objects with attributes and methods." },
+  method:          { label: "Function",      icon: "ƒ",  border: "#e8a824", bg: "#e8a82422", desc: "A standalone function or method — a callable unit of logic." },
+  island_chain:    { label: "Island Chain",  icon: "🏝", border: "#b8a878", bg: "#b8a87822", desc: "A group of tightly connected nodes forming an isolated cluster." },
+  group:           { label: "Group",         icon: "📦", border: "#8c8460", bg: "#8c846022", desc: "Loose nodes of the same type bundled together by naming or file conventions." },
+  graph_overview:  { label: "Graph Overview", icon: "🗂️", border: "#b8a878", bg: "#b8a87822", desc: "A high-level overview node representing the entire graph." },
 };
-const NODE_KIND_ORDER = ["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+const NODE_KIND_ORDER = ["class", "method", "island_chain", "group"];
 
 const EDGE_KIND_META = {
   inherits:     { label: "Inherits",     border: "#d44a32", style: "",       desc: "Class inheritance — one class extends or subclasses another." },
@@ -3564,7 +3536,7 @@ function buildGroupGraph(groupNode) {
   return { nodes, edges };
 }
 
-const _GROUP_KINDS = new Set(["test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+const _GROUP_KINDS = new Set(["group"]);
 
 function drillIntoNode(d) {
   _inspectorPinned = false;
@@ -4258,7 +4230,7 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   // Add clickable/hoverable node hit-layer in detail view (bottom): hover highlights, click drills
   const hitLayer = zoomG.append("g").attr("class", "detail-hit-layer");
 
-  const SCROLLABLE_KINDS = ["class", "method", "island_chain", "test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+  const SCROLLABLE_KINDS = ["class", "method", "island_chain", "group"];
   const HEADER_H = 38; // height of the title+kind header area above the scrollable content
 
   const hitGroups = hitLayer.selectAll("g")
@@ -4586,7 +4558,7 @@ function renderGraph() {
     centerDetailOnGraphPoint(d.x, d.y, true);
   }).on("contextmenu",function(event,d){ showNodeContextMenu(event,d); });
 
-  const GROUP_KINDS = ["test_group", "model_group", "config_group", "handler_group", "utility_group", "exception_group", "event_group"];
+  const GROUP_KINDS = ["group"];
   const groupFo = node.filter(d => GROUP_KINDS.includes(d.kind))
     .append("foreignObject").attr("class","node-methods-fo")
     .attr("x",d=>-(NODE_SIZE[d.kind].w/2)).attr("y",d=>-(NODE_SIZE[d.kind].h/2)+38)
@@ -4796,8 +4768,7 @@ function renderGraph() {
 var _ctxMenuNode = null;        // the node data object the menu was opened for
 var _inspectorPinned = false;   // when true, hover won't overwrite the inspector
 
-var _DRILLABLE_KINDS = new Set(["class", "island_chain", "test_group", "model_group",
-  "config_group", "handler_group", "utility_group", "exception_group", "event_group"]);
+var _DRILLABLE_KINDS = new Set(["class", "island_chain", "group"]);
 
 function _canDrill(d) {
   if (!_DRILLABLE_KINDS.has(d.kind)) return false;
@@ -6092,13 +6063,7 @@ function exportGraphSVG() {
     '.node-rect.class { fill:#1a2610; stroke:#6dbd4a; }',
     '.node-rect.method { fill:#1a1408; stroke:#e8a824; }',
     '.node-rect.island_chain { fill:#201a08; stroke:#b8a878; }',
-    '.node-rect.test_group { fill:#0e1a0a; stroke:#4a8033; }',
-    '.node-rect.model_group { fill:#0e1a18; stroke:#5ab8a8; }',
-    '.node-rect.config_group { fill:#18160e; stroke:#8c8460; }',
-    '.node-rect.handler_group { fill:#1a100e; stroke:#d44a32; }',
-    '.node-rect.utility_group { fill:#141a0e; stroke:#6dbd4a; }',
-    '.node-rect.exception_group { fill:#1a150a; stroke:#c4891a; }',
-    '.node-rect.event_group { fill:#14180e; stroke:#5a6348; }',
+    '.node-rect.group { fill:#14180e; stroke:#8c8460; }',
     '.node-title { font-size:15px; fill:#d4ccb4; font-weight:700; font-family:Rajdhani,sans-serif; }',
     '.node-kind-inside { font-size:11px; fill:#8c8460; font-family:Rajdhani,sans-serif; font-weight:600; }',
     'text { font-family:Rajdhani,sans-serif; }',

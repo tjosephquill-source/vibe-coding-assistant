@@ -64,19 +64,11 @@ for k, v in sorted(akinds.items(), key=lambda x: x[0].value):
 
 print(f"  Edges: {len(ag.edges)}")
 
-test_groups = [n for n in ag.nodes if n.kind == NodeKind.TEST_GROUP]
+groups = [n for n in ag.nodes if n.kind == NodeKind.GROUP]
 metaclasses = [n for n in ag.nodes if n.kind == NodeKind.ISLAND_CHAIN]
-heuristic_groups = [n for n in ag.nodes if n.kind.value.endswith("_group")]
 
-for tg in test_groups:
-    print(f"\n  Test Group: {tg.name}")
-    print(f"    Members: {tg.members}")
-    print(f"    Docstring: {tg.docstring}")
-
-for sg in heuristic_groups:
-    if sg.kind == NodeKind.TEST_GROUP:
-        continue
-    print(f"\n  Heuristic Group ({sg.kind.value}): {sg.name}")
+for sg in groups:
+    print(f"\n  Group: {sg.name}")
     print(f"    Members: {sg.members}")
     print(f"    Docstring: {sg.docstring}")
 
@@ -86,5 +78,5 @@ for mc in metaclasses:
     print(f"    Member IDs: {mc.member_ids}")
     print(f"    Depth: {mc.depth}")
 
-if not metaclasses and not test_groups and not heuristic_groups:
+if not metaclasses and not groups:
     print("\n  (No groups formed)")
