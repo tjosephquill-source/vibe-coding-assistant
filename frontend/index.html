@@ -63,25 +63,25 @@
   }
   #wm-toolbar::before { content:'◆'; color:var(--accent); font-size:10px; margin-right:2px; text-shadow:0 0 8px var(--accent-glow); }
   .wm-toolbar-group { position:relative; }
-  #wm-view-btn, #wm-reset-btn, #wm-export-btn {
+  #wm-view-btn, #wm-reset-btn, #wm-export-btn, #wm-config-btn {
     background:var(--surface-alt); border:1px solid var(--border); color:var(--text-muted);
     cursor:pointer; font-size:11px; padding:3px 10px;
     font-family:'Rajdhani',sans-serif; font-weight:600;
     text-transform:uppercase; letter-spacing:1px;
     clip-path:var(--clip-sm); transition:all .15s;
   }
-  #wm-view-btn:hover, #wm-reset-btn:hover, #wm-export-btn:hover {
+  #wm-view-btn:hover, #wm-reset-btn:hover, #wm-export-btn:hover, #wm-config-btn:hover {
     background:var(--olive); color:var(--accent); border-color:var(--accent-dim);
     text-shadow:0 0 6px var(--accent-glow);
   }
-  #wm-view-menu {
+  #wm-view-menu, #wm-config-menu {
     display:none; position:absolute; top:100%; left:0; min-width:220px;
     background:var(--surface); border:1px solid var(--border-hi);
     padding:4px 0; z-index:9999;
     box-shadow:0 8px 28px rgba(0,0,0,.6); margin-top:4px;
     clip-path:var(--clip);
   }
-  #wm-view-menu.open { display:block; }
+  #wm-view-menu.open, #wm-config-menu.open { display:block; }
   .wm-view-item {
     display:flex; align-items:center; gap:8px;
     padding:6px 14px; cursor:pointer; font-size:12px; color:var(--text-muted);
@@ -220,6 +220,12 @@
     display:flex; flex-direction:column; overflow:hidden;
     resize:both; min-width:200px; min-height:120px;
     clip-path:var(--clip);
+  }
+  .wm-floating-panel[data-panel-id="preview"] {
+    width:480px; height:72px; min-height:60px; max-height:90px;
+    resize:horizontal;
+    border-color:var(--accent-dim);
+    box-shadow:0 0 14px var(--accent-glow),0 8px 32px rgba(0,0,0,.6);
   }
   .wm-floating-titlebar { }
   .wm-floating-content { overflow:auto; }
@@ -871,6 +877,96 @@
   .chat-send-btn:hover { background:var(--accent-dim); color:var(--bg); }
   .chat-send-btn:disabled { opacity:.3; cursor:default; }
 
+  /* ── Strip pane (auto-size, no dead space) ──────────────── */
+  .wm-split-pane-strip {
+    display:flex !important;
+    flex-direction:column !important;
+    flex:0 0 auto !important;
+    overflow:visible !important;
+  }
+  .wm-split-pane-strip > .wm-panel {
+    flex:0 0 auto !important;
+    height:auto !important;
+    width:100% !important;
+  }
+  .wm-split-pane-strip .wm-panel-content {
+    flex:0 0 auto !important;
+    overflow:visible !important;
+  }
+  .wm-splitter-strip { display:none !important; }
+
+
+  /* ── Preview panel (strip mode) ──────────────────────────── */
+  .wm-panel[data-panel-id="preview"] {
+    border:1px solid var(--accent-dim);
+    box-shadow:0 0 10px var(--accent-glow), inset 0 0 12px rgba(232,168,36,.04);
+  }
+  .wm-panel[data-panel-id="preview"] .wm-panel-titlebar {
+    height:26px; min-height:26px; padding:0 10px;
+    font-size:11px;
+    background:linear-gradient(180deg,rgba(232,168,36,.12),rgba(232,168,36,.04));
+    border-bottom:1px solid var(--accent-dim);
+  }
+  .wm-panel[data-panel-id="preview"] .wm-panel-titlebar::before {
+    content:'▶'; font-size:10px; color:var(--accent);
+    text-shadow:0 0 6px var(--accent-glow);
+  }
+  .wm-panel[data-panel-id="preview"] .wm-panel-title {
+    font-size:11px; letter-spacing:1.5px; color:var(--accent);
+    text-shadow:0 0 8px var(--accent-glow);
+  }
+  .wm-panel[data-panel-id="preview"] .wm-panel-icon { display:none; }
+  #preview-panel {
+    background:linear-gradient(180deg,rgba(232,168,36,.06),var(--surface));
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .preview-controls {
+    display:flex; align-items:center; gap:6px;
+    padding:5px 12px; min-height:32px;
+    flex-shrink:0; flex-wrap:wrap;
+  }
+  .preview-level-select {
+    background:var(--surface-alt); border:1px solid var(--accent-dim);
+    color:var(--text); font-family:'Share Tech Mono',monospace;
+    font-size:11px; padding:3px 8px; cursor:pointer;
+    clip-path:var(--clip-sm);
+  }
+  .preview-level-select:focus { border-color:var(--accent); outline:none; box-shadow:0 0 6px var(--accent-glow); }
+  .preview-btn {
+    background:var(--surface-alt); border:1px solid var(--accent-dim);
+    color:var(--text); font-size:14px; padding:3px 10px;
+    cursor:pointer; font-family:'Rajdhani',sans-serif; font-weight:700;
+    text-transform:uppercase; letter-spacing:.5px;
+    clip-path:var(--clip-sm); transition:all .15s;
+    min-width:28px; text-align:center;
+  }
+  .preview-btn:hover {
+    background:var(--accent-dim); color:var(--bg); border-color:var(--accent);
+    text-shadow:none; box-shadow:0 0 8px var(--accent-glow);
+  }
+  .preview-btn:disabled { opacity:.25; cursor:default; box-shadow:none; }
+  .preview-btn.play { color:var(--green); border-color:var(--green-dim); }
+  .preview-btn.play:hover { background:var(--green-dim); color:var(--bg); border-color:var(--green); box-shadow:0 0 8px rgba(109,189,74,.3); }
+  .preview-btn.stop { color:var(--red); border-color:rgba(212,74,50,.35); }
+  .preview-btn.stop:hover { background:rgba(212,74,50,.25); border-color:var(--red); box-shadow:0 0 8px rgba(212,74,50,.3); }
+  .preview-scene-counter {
+    font-size:11px; color:var(--accent);
+    text-transform:uppercase; letter-spacing:1px;
+    font-family:'Share Tech Mono',monospace;
+    margin-left:auto; text-shadow:0 0 6px var(--accent-glow);
+  }
+  .preview-progress-bar {
+    height:3px; flex-shrink:0;
+    background:rgba(232,168,36,.15);
+    position:relative; overflow:hidden;
+  }
+  .preview-progress-fill {
+    position:absolute; top:0; left:0; height:100%;
+    background:linear-gradient(90deg,var(--accent-dim),var(--accent));
+    transition:width 0.3s linear;
+    box-shadow:0 0 10px var(--accent-glow), 0 0 4px var(--accent);
+  }
+
   /* ── Project selector ─────────────────────────────────────── */
   .project-group { display:flex; align-items:center; gap:6px; margin-right:4px; }
   .project-group label {
@@ -1095,6 +1191,10 @@
     <div id="wm-view-menu"></div>
   </div>
   <button id="wm-reset-btn" title="Reset layout to default">⟲ Reset</button>
+  <div class="wm-toolbar-group">
+    <button id="wm-config-btn" title="Switch layout configuration">◈ Default ▾</button>
+    <div id="wm-config-menu"></div>
+  </div>
   <button id="wm-export-btn" title="Export graph as SVG">⤓ Export</button>
 </div>
 
@@ -2055,6 +2155,728 @@ PanelRegistry.register({
   },
 });
 
+// ══════════════════════════════════════════════════════════════════
+// PREVIEW — architecture walkthrough with graph animation
+// Controls live in their own panel; narration is shown in Node Description.
+// ══════════════════════════════════════════════════════════════════
+
+var _previewScenes = [];
+var _previewIndex = 0;
+var _previewTimer = null;
+var _previewPlaying = false;
+var _previewSceneStart = 0;
+var _previewProgressRAF = null;
+var _previewAudioEl = null;       // current Audio element for TTS playback
+var _previewAudioMuted = false;   // user mute toggle
+var _previewAudioLoading = false; // true while fetching TTS audio
+
+function _previewRenderPanel(container) {
+  container.id = 'preview-panel';
+
+  // Controls row
+  var controls = document.createElement('div');
+  controls.className = 'preview-controls';
+
+  var levelSelect = document.createElement('select');
+  levelSelect.className = 'preview-level-select';
+  levelSelect.id = 'preview-level';
+  [['high','High'],['medium','Medium'],['low','Low']].forEach(function(opt) {
+    var o = document.createElement('option');
+    o.value = opt[0]; o.textContent = opt[1];
+    levelSelect.appendChild(o);
+  });
+
+  var backBtn = document.createElement('button');
+  backBtn.className = 'preview-btn';
+  backBtn.id = 'preview-back';
+  backBtn.textContent = '⏮';
+  backBtn.title = 'Previous scene';
+  backBtn.disabled = true;
+  backBtn.addEventListener('click', function() { _previewSkipBack(); });
+
+  var playBtn = document.createElement('button');
+  playBtn.className = 'preview-btn play';
+  playBtn.id = 'preview-play';
+  playBtn.textContent = '▶';
+  playBtn.title = 'Play walkthrough';
+  playBtn.addEventListener('click', function() { _previewStart(); });
+
+  var pauseBtn = document.createElement('button');
+  pauseBtn.className = 'preview-btn';
+  pauseBtn.id = 'preview-pause';
+  pauseBtn.textContent = '⏸';
+  pauseBtn.title = 'Pause';
+  pauseBtn.style.display = 'none';
+  pauseBtn.addEventListener('click', function() { _previewPause(); });
+
+  var fwdBtn = document.createElement('button');
+  fwdBtn.className = 'preview-btn';
+  fwdBtn.id = 'preview-fwd';
+  fwdBtn.textContent = '⏭';
+  fwdBtn.title = 'Next scene';
+  fwdBtn.disabled = true;
+  fwdBtn.addEventListener('click', function() { _previewSkipForward(); });
+
+  var stopBtn = document.createElement('button');
+  stopBtn.className = 'preview-btn stop';
+  stopBtn.id = 'preview-stop';
+  stopBtn.textContent = '■';
+  stopBtn.title = 'Stop';
+  stopBtn.disabled = true;
+  stopBtn.addEventListener('click', function() { _previewStop(); });
+
+  var counter = document.createElement('span');
+  counter.className = 'preview-scene-counter';
+  counter.id = 'preview-counter';
+  counter.textContent = '';
+
+  var muteBtn = document.createElement('button');
+  muteBtn.className = 'preview-btn mute';
+  muteBtn.id = 'preview-mute';
+  muteBtn.textContent = '🔊';
+  muteBtn.title = 'Mute / Unmute voice';
+  muteBtn.addEventListener('click', function() {
+    _previewAudioMuted = !_previewAudioMuted;
+    muteBtn.textContent = _previewAudioMuted ? '🔇' : '🔊';
+    if (_previewAudioMuted && _previewAudioEl) {
+      _previewAudioEl.pause();
+    }
+  });
+
+  controls.appendChild(levelSelect);
+  controls.appendChild(backBtn);
+  controls.appendChild(playBtn);
+  controls.appendChild(pauseBtn);
+  controls.appendChild(fwdBtn);
+  controls.appendChild(stopBtn);
+  controls.appendChild(counter);
+  controls.appendChild(muteBtn);
+
+  // Progress bar
+  var progress = document.createElement('div');
+  progress.className = 'preview-progress-bar';
+  progress.id = 'preview-progress';
+  progress.innerHTML = '<div class="preview-progress-fill" id="preview-progress-fill" style="width:0%"></div>';
+
+  container.appendChild(controls);
+  container.appendChild(progress);
+}
+
+PanelRegistry.register({
+  id: 'preview',
+  title: 'Preview',
+  icon: '▶️',
+  contentId: 'preview-panel',
+  closable: true,
+  floatable: true,
+  strip: true,
+  render: function(content) {
+    _previewRenderPanel(content);
+  },
+});
+
+/* ── Helper: push text into the Node Description bar ────────────── */
+function _previewShowNarration(text, isLoading) {
+  var bar = document.getElementById('node-desc-bar');
+  if (!bar) return;
+  bar.className = '';
+  if (isLoading) {
+    bar.innerHTML = '<span class="desc-text desc-loading">' + _escHtml(text) + '</span>';
+  } else {
+    bar.innerHTML = '<span class="desc-text">' + _escHtml(text) + '</span>';
+  }
+  _fitNodeDescFontSize();
+}
+
+function _previewShowNarrationTypewriter(text) {
+  var bar = document.getElementById('node-desc-bar');
+  if (!bar) return;
+  bar.className = '';
+  bar.innerHTML = '<span class="desc-text" id="preview-typewriter"></span>';
+  _fitNodeDescFontSize();
+  _previewTypewriter(document.getElementById('preview-typewriter'), text);
+}
+
+function _previewUpdateCounter() {
+  var counter = document.getElementById('preview-counter');
+  if (!counter) return;
+  if (_previewScenes.length === 0) {
+    counter.textContent = '';
+  } else {
+    counter.textContent = (_previewIndex + 1) + ' / ' + _previewScenes.length;
+  }
+}
+
+function _previewUpdateSkipButtons() {
+  var backBtn = document.getElementById('preview-back');
+  var fwdBtn = document.getElementById('preview-fwd');
+  var hasScenes = _previewScenes.length > 0;
+  if (backBtn) backBtn.disabled = !hasScenes || _previewIndex <= 0;
+  if (fwdBtn) fwdBtn.disabled = !hasScenes || _previewIndex >= _previewScenes.length - 1;
+}
+
+/* ── Main controls ──────────────────────────────────────────────── */
+
+async function _previewStart() {
+  if (_previewPlaying) return;
+
+  var level = document.getElementById('preview-level');
+  var levelVal = level ? level.value : 'high';
+  var playBtn = document.getElementById('preview-play');
+  var pauseBtn = document.getElementById('preview-pause');
+  var stopBtn = document.getElementById('preview-stop');
+
+  _previewShowNarration('Generating walkthrough…', true);
+  if (playBtn) playBtn.disabled = true;
+
+  try {
+    var resp = await fetch(API_BASE + '/api/preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ level: levelVal }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    _previewScenes = data.scenes || [];
+    if (_previewScenes.length === 0) {
+      _previewShowNarration('No scenes generated', false);
+      if (playBtn) playBtn.disabled = false;
+      return;
+    }
+
+    _previewIndex = 0;
+    _previewPlaying = true;
+    if (playBtn) playBtn.style.display = 'none';
+    if (pauseBtn) pauseBtn.style.display = '';
+    if (stopBtn) stopBtn.disabled = false;
+    _previewUpdateCounter();
+    _previewUpdateSkipButtons();
+    _previewPlayScene();
+
+  } catch (err) {
+    _previewShowNarration('Error: ' + err.message, false);
+    if (playBtn) { playBtn.disabled = false; playBtn.style.display = ''; }
+    if (pauseBtn) pauseBtn.style.display = 'none';
+  }
+}
+
+function _previewPause() {
+  if (!_previewPlaying) return;
+  _previewPlaying = false;
+  if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+  if (_previewProgressRAF) { cancelAnimationFrame(_previewProgressRAF); _previewProgressRAF = null; }
+  if (_previewAudioEl) { _previewAudioEl.pause(); }
+
+  var playBtn = document.getElementById('preview-play');
+  var pauseBtn = document.getElementById('preview-pause');
+  if (playBtn) { playBtn.style.display = ''; playBtn.disabled = false; playBtn.textContent = '▶'; }
+  if (pauseBtn) pauseBtn.style.display = 'none';
+}
+
+function _previewResume() {
+  if (_previewPlaying) return;
+  if (_previewIndex >= _previewScenes.length) return;
+  _previewPlaying = true;
+
+  var playBtn = document.getElementById('preview-play');
+  var pauseBtn = document.getElementById('preview-pause');
+  if (playBtn) playBtn.style.display = 'none';
+  if (pauseBtn) pauseBtn.style.display = '';
+
+  _previewIndex++;
+  if (_previewIndex < _previewScenes.length) {
+    _previewUpdateCounter();
+    _previewUpdateSkipButtons();
+    _previewPlayScene();
+  } else {
+    _previewFinish();
+  }
+}
+
+function _previewSkipForward() {
+  if (_previewScenes.length === 0) return;
+  if (_previewIndex >= _previewScenes.length - 1) return;
+  if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+  if (_previewProgressRAF) { cancelAnimationFrame(_previewProgressRAF); _previewProgressRAF = null; }
+  _previewStopAudio();
+  _previewIndex++;
+  _previewUpdateCounter();
+  _previewUpdateSkipButtons();
+  if (_previewPlaying) {
+    _previewPlayScene();
+  } else {
+    // When paused, still show the scene but don't auto-advance
+    _previewRenderSceneStatic();
+  }
+}
+
+function _previewSkipBack() {
+  if (_previewScenes.length === 0) return;
+  if (_previewIndex <= 0) return;
+  if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+  if (_previewProgressRAF) { cancelAnimationFrame(_previewProgressRAF); _previewProgressRAF = null; }
+  _previewStopAudio();
+  _previewIndex--;
+  _previewUpdateCounter();
+  _previewUpdateSkipButtons();
+  if (_previewPlaying) {
+    _previewPlayScene();
+  } else {
+    _previewRenderSceneStatic();
+  }
+}
+
+function _previewStop() {
+  _previewPlaying = false;
+  if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+  if (_previewProgressRAF) { cancelAnimationFrame(_previewProgressRAF); _previewProgressRAF = null; }
+  _previewStopAudio();
+  _previewScenes = [];
+  _previewIndex = 0;
+
+  if (typeof clearHighlight === 'function') clearHighlight();
+
+  var playBtn = document.getElementById('preview-play');
+  var pauseBtn = document.getElementById('preview-pause');
+  var stopBtn = document.getElementById('preview-stop');
+  var progressFill = document.getElementById('preview-progress-fill');
+
+  if (playBtn) { playBtn.style.display = ''; playBtn.disabled = false; playBtn.textContent = '▶'; }
+  if (pauseBtn) pauseBtn.style.display = 'none';
+  if (stopBtn) stopBtn.disabled = true;
+  if (progressFill) progressFill.style.width = '0%';
+  _previewUpdateCounter();
+  _previewUpdateSkipButtons();
+
+  // Restore the Node Description bar to its normal overview state
+  if (typeof _showGraphOverviewDesc === 'function') _showGraphOverviewDesc();
+}
+
+function _previewFinish() {
+  _previewPlaying = false;
+  if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+  if (_previewProgressRAF) { cancelAnimationFrame(_previewProgressRAF); _previewProgressRAF = null; }
+  _previewStopAudio();
+
+  if (typeof clearHighlight === 'function') clearHighlight();
+
+  var playBtn = document.getElementById('preview-play');
+  var pauseBtn = document.getElementById('preview-pause');
+  var stopBtn = document.getElementById('preview-stop');
+  var progressFill = document.getElementById('preview-progress-fill');
+
+  _previewShowNarration('✓ Walkthrough complete', false);
+
+  if (playBtn) { playBtn.style.display = ''; playBtn.disabled = false; playBtn.textContent = '▶'; }
+  if (pauseBtn) pauseBtn.style.display = 'none';
+  if (stopBtn) stopBtn.disabled = true;
+  if (progressFill) progressFill.style.width = '100%';
+  _previewUpdateCounter();
+  _previewUpdateSkipButtons();
+}
+
+/* ── Scene rendering (shared between play and static/skip) ──────── */
+
+function _previewApplySceneHighlights(scene) {
+  var focusIds = new Set(scene.focus_node_ids || []);
+  var secondaryIds = new Set(scene.secondary_node_ids || []);
+  var sceneEdges = scene.edge_ids || [];
+
+  if (typeof clearHighlight === 'function') clearHighlight();
+
+  // Overview panel nodes
+  if (window._nodes) {
+    window._nodes.selectAll(".node-rect")
+      .style("opacity", function(n) { return focusIds.has(n.id) ? 1 : secondaryIds.has(n.id) ? 0.5 : 0.12; })
+      .classed("node-focused", function(n) { return focusIds.has(n.id); });
+    window._nodes.selectAll(".node-title")
+      .style("opacity", function(n) { return focusIds.has(n.id) ? 1 : secondaryIds.has(n.id) ? 0.5 : 0.12; });
+    window._nodes.selectAll(".node-kind-inside")
+      .style("opacity", function(n) { return focusIds.has(n.id) ? 1 : secondaryIds.has(n.id) ? 0.5 : 0.12; });
+  }
+
+  // Overview panel edges
+  if (window._links) {
+    window._links
+      .style("opacity", function(e) {
+        var sid = _nid(e.source), tid = _nid(e.target);
+        for (var i = 0; i < sceneEdges.length; i++) {
+          if (sceneEdges[i].source === sid && sceneEdges[i].target === tid) return 0.95;
+        }
+        if (focusIds.has(sid) && focusIds.has(tid)) return 0.7;
+        return 0.05;
+      })
+      .classed("edge-highlighted", function(e) {
+        var sid = _nid(e.source), tid = _nid(e.target);
+        for (var i = 0; i < sceneEdges.length; i++) {
+          if (sceneEdges[i].source === sid && sceneEdges[i].target === tid) return true;
+        }
+        return focusIds.has(sid) && focusIds.has(tid);
+      });
+  }
+
+  // Detail panel mirroring
+  var zoomSvg = d3.select("#zoom-svg");
+  if (!zoomSvg.empty()) {
+    zoomSvg.selectAll(".node-group").each(function() {
+      var el = d3.select(this);
+      var nid = el.attr("data-node-id");
+      if (!nid) return;
+      var isFocus = focusIds.has(nid);
+      var isSecondary = secondaryIds.has(nid);
+      el.selectAll(".node-rect").style("opacity", isFocus ? 1 : isSecondary ? 0.5 : 0.12).classed("node-focused", isFocus);
+      el.selectAll(".node-title").style("opacity", isFocus ? 1 : isSecondary ? 0.5 : 0.12);
+      el.selectAll(".node-kind-inside").style("opacity", isFocus ? 1 : isSecondary ? 0.5 : 0.12);
+    });
+    zoomSvg.selectAll("path[data-edge-src]").each(function() {
+      var el = d3.select(this);
+      var sid = el.attr("data-edge-src"), tid = el.attr("data-edge-tgt");
+      var isConn = false;
+      for (var i = 0; i < sceneEdges.length; i++) {
+        if (sceneEdges[i].source === sid && sceneEdges[i].target === tid) { isConn = true; break; }
+      }
+      if (!isConn) isConn = focusIds.has(sid) && focusIds.has(tid);
+      el.style("opacity", isConn ? 0.95 : 0.05).classed("edge-highlighted", isConn);
+    });
+  }
+
+  // Flow dots
+  if (typeof _clearFlowDots === 'function') _clearFlowDots();
+  if (typeof _addFlowDots === 'function') {
+    _addFlowDots(d3.select("#graph-container svg"));
+    _addFlowDots(d3.select("#zoom-svg"));
+  }
+
+  // Edge labels
+  if (window._edgeLabels) {
+    window._edgeLabels.classed("visible", function(e) {
+      var sid = _nid(e.source), tid = _nid(e.target);
+      for (var i = 0; i < sceneEdges.length; i++) {
+        if (sceneEdges[i].source === sid && sceneEdges[i].target === tid) return true;
+      }
+      return false;
+    });
+  }
+
+  return focusIds;
+}
+
+function _previewApplyCamera(camera, focusIds) {
+  if (camera === 'zoom_out_all') {
+    var container = document.getElementById("graph-container");
+    if (container && window._zoomBehavior && window._nodeData) {
+      fitGraphToViewport(d3.select("#graph-svg"), window._zoomBehavior,
+        window._nodeData, container.clientWidth, container.clientHeight, 20, true);
+    }
+  } else if (camera === 'zoom_to_focus' || camera === 'pan_to_focus') {
+    var focusNodes = (window._nodeData || []).filter(function(n) { return focusIds.has(n.id); });
+    if (focusNodes.length > 0) {
+      var cx = 0, cy = 0;
+      focusNodes.forEach(function(n) { cx += n.x; cy += n.y; });
+      cx /= focusNodes.length; cy /= focusNodes.length;
+      if (typeof centerDetailOnGraphPoint === 'function') centerDetailOnGraphPoint(cx, cy, true);
+      if (window._zoomBehavior) {
+        var ovContainer = document.getElementById("graph-container");
+        if (ovContainer) {
+          var ovSvg = d3.select("#graph-svg");
+          var ovW = ovContainer.clientWidth, ovH = ovContainer.clientHeight;
+          var fMinX = Infinity, fMinY = Infinity, fMaxX = -Infinity, fMaxY = -Infinity;
+          focusNodes.forEach(function(n) {
+            var s = NODE_SIZE[n.kind] || { w: 160, h: 60 };
+            fMinX = Math.min(fMinX, n.x - s.w); fMinY = Math.min(fMinY, n.y - s.h);
+            fMaxX = Math.max(fMaxX, n.x + s.w); fMaxY = Math.max(fMaxY, n.y + s.h);
+          });
+          var pad = 80;
+          var fw = Math.max(1, fMaxX - fMinX + pad * 2);
+          var fh = Math.max(1, fMaxY - fMinY + pad * 2);
+          var fscale = Math.min(ovW / fw, ovH / fh, 3);
+          var fcx = (fMinX + fMaxX) / 2, fcy = (fMinY + fMaxY) / 2;
+          var ftx = ovW / 2 - fcx * fscale;
+          var fty = ovH / 2 - fcy * fscale;
+          var ft = d3.zoomIdentity.translate(ftx, fty).scale(fscale);
+          ovSvg.transition().duration(600).call(window._zoomBehavior.transform, ft);
+        }
+      }
+    }
+  }
+}
+
+/** Show a scene without auto-advance (used when skipping while paused). */
+function _previewRenderSceneStatic() {
+  var scene = _previewScenes[_previewIndex];
+  if (!scene) return;
+  _previewShowNarration(scene.narration || '', false);
+  var focusIds = _previewApplySceneHighlights(scene);
+  _previewApplyCamera(scene.camera || 'hold', focusIds);
+}
+
+/* ── TTS audio helper ────────────────────────────────────────────── */
+
+function _previewStopAudio() {
+  if (_previewAudioEl) {
+    _previewAudioEl.pause();
+    _previewAudioEl.onended = null;
+    _previewAudioEl.onerror = null;
+    if (_previewAudioEl._objectURL) {
+      URL.revokeObjectURL(_previewAudioEl._objectURL);
+    }
+    _previewAudioEl = null;
+  }
+  _previewAudioLoading = false;
+}
+
+/**
+ * Fetch TTS audio for the given text and play it.
+ * Returns a Promise that resolves when audio finishes playing,
+ * or rejects / resolves immediately if muted or on error.
+ */
+function _previewFetchAndPlayAudio(text) {
+  return new Promise(function(resolve) {
+    if (_previewAudioMuted || !text) { resolve(); return; }
+
+    _previewAudioLoading = true;
+    fetch(API_BASE + '/api/preview/audio', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text: text }),
+    })
+    .then(function(resp) {
+      _previewAudioLoading = false;
+      if (!resp.ok) { resolve(); return; }
+      return resp.blob();
+    })
+    .then(function(blob) {
+      if (!blob) { resolve(); return; }
+      // Don't play if user muted while we were fetching, or playback was stopped
+      if (_previewAudioMuted || !_previewPlaying) { resolve(); return; }
+
+      var url = URL.createObjectURL(blob);
+      _previewStopAudio();
+      _previewAudioEl = new Audio(url);
+      _previewAudioEl._objectURL = url;
+      _previewAudioEl.onended = function() {
+        URL.revokeObjectURL(url);
+        _previewAudioEl = null;
+        resolve();
+      };
+      _previewAudioEl.onerror = function() {
+        URL.revokeObjectURL(url);
+        _previewAudioEl = null;
+        resolve();
+      };
+      _previewAudioEl.play().catch(function() { resolve(); });
+    })
+    .catch(function() {
+      _previewAudioLoading = false;
+      resolve();
+    });
+  });
+}
+
+function _previewPlayScene() {
+  if (!_previewPlaying || _previewIndex >= _previewScenes.length) {
+    _previewFinish();
+    return;
+  }
+
+  _previewStopAudio();
+
+  var scene = _previewScenes[_previewIndex];
+  var total = _previewScenes.length;
+
+  // 1. Narration in the Node Description bar (instant)
+  _previewShowNarration(scene.narration || '');
+  _previewUpdateCounter();
+  _previewUpdateSkipButtons();
+
+  // 2. Highlights + camera
+  var focusIds = _previewApplySceneHighlights(scene);
+  _previewApplyCamera(scene.camera || 'hold', focusIds);
+
+  // 3. Progress bar — use fallback duration; audio may override
+  var fallbackDuration = (scene.duration_hint || 6) * 1000;
+  _previewSceneStart = Date.now();
+  _previewAnimateProgress(fallbackDuration, _previewIndex, total);
+
+  // 4. Advance: audio-driven if not muted, timer-driven if muted
+  var sceneIndexAtStart = _previewIndex;
+
+  function _advanceToNext() {
+    // Guard: only advance if we're still on the same scene
+    if (_previewIndex !== sceneIndexAtStart || !_previewPlaying) return;
+    if (_previewTimer) { clearTimeout(_previewTimer); _previewTimer = null; }
+    _previewIndex++;
+    if (_previewIndex < _previewScenes.length) {
+      _previewUpdateCounter();
+      _previewUpdateSkipButtons();
+      _previewPlayScene();
+    } else {
+      _previewFinish();
+    }
+  }
+
+  if (!_previewAudioMuted) {
+    // Fire-and-forget: start audio, advance when it ends
+    _previewFetchAndPlayAudio(scene.narration || '').then(function() {
+      _advanceToNext();
+    });
+    // Safety fallback: if audio takes too long (network issue), advance after 30s
+    _previewTimer = setTimeout(function() {
+      if (_previewIndex === sceneIndexAtStart && _previewPlaying) {
+        _previewStopAudio();
+        _advanceToNext();
+      }
+    }, 30000);
+  } else {
+    // No audio — use fixed duration
+    _previewTimer = setTimeout(function() {
+      _advanceToNext();
+    }, fallbackDuration);
+  }
+}
+
+function _previewAnimateProgress(duration, sceneIdx, totalScenes) {
+  if (_previewProgressRAF) cancelAnimationFrame(_previewProgressRAF);
+  var progressFill = document.getElementById('preview-progress-fill');
+  if (!progressFill) return;
+
+  function tick() {
+    if (!_previewPlaying) return;
+    var elapsed = Date.now() - _previewSceneStart;
+    var sceneProgress = Math.min(1, elapsed / duration);
+    var overallProgress = ((sceneIdx + sceneProgress) / totalScenes) * 100;
+    progressFill.style.width = overallProgress + '%';
+    if (sceneProgress < 1) {
+      _previewProgressRAF = requestAnimationFrame(tick);
+    }
+  }
+  _previewProgressRAF = requestAnimationFrame(tick);
+}
+
+function _previewTypewriter(el, text) {
+  if (!el) return;
+  el.textContent = '';
+  var i = 0;
+  var speed = Math.max(15, Math.min(40, 1500 / (text.length || 1)));
+  function type() {
+    if (!_previewPlaying && i < text.length) { el.textContent = text; return; }
+    if (i < text.length) {
+      el.textContent += text.charAt(i);
+      i++;
+      _fitNodeDescFontSize();
+      setTimeout(type, speed);
+    }
+  }
+  type();
+}
+
+// Override resume on Play button when paused
+(function() {
+  var _origStart = _previewStart;
+  _previewStart = async function() {
+    if (_previewScenes.length > 0 && _previewIndex < _previewScenes.length && !_previewPlaying) {
+      _previewResume();
+      return;
+    }
+    return _origStart();
+  };
+})();
+
+
+// ══════════════════════════════════════════════════════════════════
+// LLM-BASED CONTENT CLASSIFICATION — replaces regex heuristics
+// ══════════════════════════════════════════════════════════════════
+
+var _llmContentClassifications = {};   // node_id → emoji icon
+var _llmEnrichPending = false;
+var _llmEnrichDone = false;
+
+/**
+ * Request LLM enrichment for all nodes in the current graph.
+ * Fires once after graph load; results are merged into
+ * _llmContentClassifications and used by _contentIcon().
+ */
+async function _enrichNodeClassifications() {
+  if (_llmEnrichPending) return;
+
+  var allNodes = [];
+  // Collect from all graph levels
+  [rootGraphData, fullGraphData, intermediateGraphData].forEach(function(gd) {
+    if (!gd || !gd.nodes) return;
+    gd.nodes.forEach(function(n) {
+      if (!_llmContentClassifications[n.id]) {
+        allNodes.push(n);
+      }
+    });
+  });
+
+  if (allNodes.length === 0) { _llmEnrichDone = true; return; }
+
+  // Deduplicate
+  var seen = new Set();
+  var uniqueNodes = [];
+  allNodes.forEach(function(n) {
+    if (!seen.has(n.id)) { seen.add(n.id); uniqueNodes.push(n); }
+  });
+
+  // Batch into groups of 60
+  var batches = [];
+  for (var i = 0; i < uniqueNodes.length; i += 60) {
+    batches.push(uniqueNodes.slice(i, i + 60));
+  }
+
+  _llmEnrichPending = true;
+
+  for (var b = 0; b < batches.length; b++) {
+    var batch = batches[b];
+    var payload = batch.map(function(n) {
+      var entry = { id: n.id, name: n.name, kind: n.kind };
+      if (n.file_path) entry.file_path = n.file_path;
+      if (n.methods && n.methods.length > 0) entry.methods = n.methods.slice(0, 8);
+      if (n.members && n.members.length > 0) entry.members = n.members.slice(0, 8);
+      if (n.member_methods && n.member_methods.length > 0) entry.member_methods = n.member_methods.slice(0, 8);
+      if (n.docstring) entry.docstring = n.docstring.substring(0, 80);
+      if (n.bases && n.bases.length > 0) entry.bases = n.bases.slice(0, 4);
+      if (n.line_start) entry.line_start = n.line_start;
+      if (n.line_end) entry.line_end = n.line_end;
+      return entry;
+    });
+
+    try {
+      var resp = await fetch(API_BASE + '/api/enrich', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ nodes: payload }),
+      });
+      if (resp.ok) {
+        var data = await resp.json();
+        var cls = data.classifications || {};
+        for (var nodeId in cls) {
+          _llmContentClassifications[nodeId] = cls[nodeId];
+        }
+      }
+    } catch (e) {
+      // Silently fall back to regex — enrichment is best-effort
+      console.warn('Content enrichment batch failed:', e);
+    }
+  }
+
+  _llmEnrichPending = false;
+  _llmEnrichDone = true;
+
+  // Re-render the graph to apply new classifications
+  if (graphData && typeof renderGraph === 'function') {
+    renderGraph();
+  }
+  // Update legend
+  if (graphData && typeof updateLegend === 'function') {
+    updateLegend(graphData);
+  }
+}
+
+
 // ── Programmatic chat helpers (used by context menu Summary / Query) ──
 
 /**
@@ -2980,7 +3802,11 @@ const _CONTENT_PATTERNS = [
 
 function _contentIcon(d) {
   if (typeof d === "string") return ">_";
-  // Build a haystack from node name, file path, members, methods
+  // 1. Use LLM classification if available
+  if (d.id && _llmContentClassifications[d.id]) {
+    return _llmContentClassifications[d.id];
+  }
+  // 2. Fallback to regex heuristics
   var parts = [d.name || "", d.file_path || "", d.qualified_name || ""];
   if (d.members) parts = parts.concat(d.members);
   if (d.member_methods) parts = parts.concat(d.member_methods);
@@ -3115,8 +3941,16 @@ function updateLegend(gData, legendEl) {
     contentCounts[icon] = (contentCounts[icon] || 0) + 1;
   });
 
-  for (var ci = 0; ci < _CONTENT_ICON_LEGEND.length; ci++) {
-    var entry = _CONTENT_ICON_LEGEND[ci];
+  // Sort: present items first, then alphabetically by label within each group
+  var sortedContent = _CONTENT_ICON_LEGEND.slice().sort(function(a, b) {
+    var aPresent = (contentCounts[a.icon] || 0) > 0 ? 0 : 1;
+    var bPresent = (contentCounts[b.icon] || 0) > 0 ? 0 : 1;
+    if (aPresent !== bPresent) return aPresent - bPresent;
+    return a.label.localeCompare(b.label);
+  });
+
+  for (var ci = 0; ci < sortedContent.length; ci++) {
+    var entry = sortedContent[ci];
     var cCount = contentCounts[entry.icon] || 0;
     var cItem = document.createElement("div");
     cItem.className = "legend-content-item" + (cCount === 0 ? " absent" : "");
@@ -3247,6 +4081,11 @@ async function loadGraph() {
     updateLegend(rootGraphData);
     buildSearchIndex();
     _setGraphView(rootGraphData, "Overview");
+
+    // Fire LLM content enrichment in the background (non-blocking)
+    _llmEnrichDone = false;
+    _llmContentClassifications = {};
+    _enrichNodeClassifications();
   } catch (err) {
     document.querySelectorAll('[data-loading]').forEach(function(el) { el.textContent = 'Error: ' + err.message; });
   }
@@ -4500,7 +5339,11 @@ function renderGraph() {
     .attr("class", "node-group")
     .attr("data-node-id", d => d.id)
     .on("mouseenter", function(event, d) { event.stopPropagation(); highlightConnected(d); _startAutoScroll(this, d.id); })
-    .on("mouseleave", function(event, d) { clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("mouseleave", function(event, d) {
+      // Don't clear highlights while the context menu is open for this node
+      if (_ctxMenuNode) return;
+      clearHighlight(); _deferStopAutoScroll(d.id);
+    })
     .on("click", function(event, d) {
       event.stopPropagation();
       centerDetailOnGraphPoint(d.x, d.y, true);
@@ -4528,7 +5371,7 @@ function renderGraph() {
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
     .html(d=>{const vars=(d.variables||[]).map(v=>`<div>${v.name}<span class="nv-type">: ${v.type}</span></div>`).join("");const methods=(d.methods||[]).map(m=>`<div>${m}()</div>`).join("");let inner="";if(vars){inner+=`<div class="node-vars-label">Variables (${(d.variables||[]).length})</div><div class="node-vars-scroll">${vars}</div>`;}inner+=`<div class="node-methods-label">Methods (${(d.methods||[]).length})</div><div class="node-methods-scroll">${methods||"<div>(none)</div>"}</div>`;return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">${inner}</div>`;});
   classFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
-    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("mouseleave",function(event,d){ if (_ctxMenuNode) return; clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
@@ -4540,7 +5383,7 @@ function renderGraph() {
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
     .html(d=>{const vars=(d.variables||[]).map(v=>`<div>${v.name}<span class="nv-type">: ${v.type}</span></div>`).join("");return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box"><div class="node-vars-label">Variables (${(d.variables||[]).length})</div><div class="node-vars-scroll">${vars}</div></div>`;});
   methodFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
-    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("mouseleave",function(event,d){ if (_ctxMenuNode) return; clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
@@ -4552,7 +5395,7 @@ function renderGraph() {
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
     .html(d=>{const classes=(d.members||[]).map(m=>`<div>${m}</div>`).join("");const methods=(d.member_methods||[]).map(m=>`<div>${m}()</div>`).join("");let body="";if(classes)body+=`<div class="node-methods-label">Classes (${(d.members||[]).length})</div><div class="node-methods-scroll">${classes}</div>`;if(methods)body+=(classes?'':'')+`<div class="node-methods-label">Methods (${(d.member_methods||[]).length})</div><div class="node-methods-scroll">${methods}</div>`;if(!body)body='<div>(none)</div>';return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">${body}</div>`;});
   metaFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
-    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("mouseleave",function(event,d){ if (_ctxMenuNode) return; clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
@@ -4565,7 +5408,7 @@ function renderGraph() {
     .attr("width",d=>NODE_SIZE[d.kind].w).attr("height",d=>NODE_SIZE[d.kind].h-40)
     .html(d=>{const classes=(d.members||[]).map(m=>`<div>${m}</div>`).join("");const methods=(d.member_methods||[]).map(m=>`<div>${m}()</div>`).join("");let body="";if(classes)body+=`<div class="node-methods-label">Members (${(d.members||[]).length})</div><div class="node-methods-scroll">${classes}</div>`;if(methods)body+=`<div class="node-methods-label">Methods (${(d.member_methods||[]).length})</div><div class="node-methods-scroll">${methods}</div>`;if(!body)body='<div>(none)</div>';return`<div xmlns="http://www.w3.org/1999/xhtml" class="node-methods-box">${body}</div>`;});
   groupFo.on("mouseenter",function(event,d){ event.stopPropagation(); highlightConnected(d); _startAutoScroll(this.parentNode, d.id); })
-    .on("mouseleave",function(event,d){ clearHighlight(); _deferStopAutoScroll(d.id); })
+    .on("mouseleave",function(event,d){ if (_ctxMenuNode) return; clearHighlight(); _deferStopAutoScroll(d.id); })
     .on("click",function(event,d){
     event.stopPropagation();
     centerDetailOnGraphPoint(d.x, d.y, true);
@@ -4830,7 +5673,12 @@ function showNodeContextMenu(event, d) {
 function hideNodeContextMenu() {
   var menu = document.getElementById("node-ctx-menu");
   if (menu) menu.classList.remove("open");
+  var hadNode = _ctxMenuNode;
   _ctxMenuNode = null;
+  // Reset highlights when the menu closes (unless an action pinned the inspector)
+  if (hadNode && !_inspectorPinned) {
+    clearHighlight();
+  }
 }
 
 // Menu item handlers (DOM already exists since <script> is at end of body)
@@ -5020,6 +5868,8 @@ function _descBarHtml(d, bodyHtml) {
 }
 
 function _showNodeDesc(d) {
+  // Don't overwrite the narration while a preview walkthrough is active
+  if (_previewScenes.length > 0) return;
   var bar = document.getElementById('node-desc-bar');
   if (!bar) return;
   _nodeDescHoverId = d.id;
@@ -5085,6 +5935,8 @@ function _showNodeDesc(d) {
 function _hideNodeDesc() {
   _nodeDescHoverId = null;
   if (_nodeDescAbort) { _nodeDescAbort.abort(); _nodeDescAbort = null; }
+  // Don't reset to overview if a preview walkthrough is active
+  if (_previewScenes.length > 0) return;
   _showGraphOverviewDesc();
 }
 
@@ -5448,6 +6300,10 @@ function _reloadAllData() {
   graphStack = [];
   _positionCache.clear();
   _nodeDescCache.clear();
+  _llmContentClassifications = {};
+  _llmEnrichDone = false;
+  _llmEnrichPending = false;
+  _previewStop();
   currentGraphLabel = "Overview";
   updateBreadcrumb();
 

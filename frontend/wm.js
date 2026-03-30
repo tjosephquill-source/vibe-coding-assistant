@@ -12,41 +12,81 @@
  */
 
 /* ================================================================
-   DEFAULT LAYOUT
+   LAYOUT CONFIGURATIONS — named presets
    ================================================================ */
-const WM_DEFAULT_LAYOUT = {
-  type: 'split',
-  direction: 'horizontal',
-  ratio: 0.78,
-  children: [
-    {
+const WM_LAYOUT_CONFIGS = {
+  'Default': {
+    layout: {
       type: 'split',
-      direction: 'vertical',
-      ratio: 0.4,
+      direction: 'horizontal',
+      ratio: 0.55,
       children: [
-        { type: 'panel', panelId: 'overview' },
-        { type: 'tabs', panels: ['detail-view', 'code-editor'], activeIndex: 0 },
-      ],
-    },
-    {
-      type: 'split',
-      direction: 'vertical',
-      ratio: 0.35,
-      children: [
-        { type: 'panel', panelId: 'directory' },
+        {
+          type: 'split',
+          direction: 'vertical',
+          ratio: 0.45,
+          children: [
+            {
+              type: 'split',
+              direction: 'horizontal',
+              ratio: 0.65,
+              children: [
+                { type: 'panel', panelId: 'overview' },
+                { type: 'panel', panelId: 'legend' },
+              ],
+            },
+            { type: 'tabs', panels: ['detail-view', 'code-editor'], activeIndex: 0 },
+          ],
+        },
         {
           type: 'split',
           direction: 'vertical',
           ratio: 0.5,
           children: [
-            { type: 'tabs', panels: ['node-inspector', 'insights'], activeIndex: 0 },
-            { type: 'tabs', panels: ['llm-chat', 'legend'], activeIndex: 0 },
+            { type: 'panel', panelId: 'node-description' },
+            { type: 'tabs', panels: ['node-inspector', 'directory'], activeIndex: 0 },
           ],
         },
       ],
     },
-  ],
+    closedPanels: [],
+  },
+
+  'Walkthrough': {
+    layout: {
+      type: 'split',
+      direction: 'horizontal',
+      ratio: 0.55,
+      children: [
+        {
+          type: 'split',
+          direction: 'vertical',
+          ratio: 0.45,
+          children: [
+            { type: 'panel', panelId: 'overview' },
+            { type: 'panel', panelId: 'detail-view' },
+          ],
+        },
+        {
+          type: 'split',
+          direction: 'vertical',
+          ratio: 0.5,
+          children: [
+            { type: 'panel', panelId: 'node-description' },
+            { type: 'panel', panelId: 'preview' },
+          ],
+        },
+      ],
+    },
+    closedPanels: ['legend', 'code-editor', 'node-inspector', 'directory', 'insights', 'llm-chat', 'shortcuts'],
+  },
 };
+
+/** Active configuration name (persisted alongside layout state) */
+var WM_ACTIVE_CONFIG = 'Default';
+
+/** Backward-compat alias */
+const WM_DEFAULT_LAYOUT = WM_LAYOUT_CONFIGS['Default'].layout;
 
 /* ================================================================
    STATE SERIALIZER — persist / restore layout to localStorage
@@ -54,12 +94,13 @@ const WM_DEFAULT_LAYOUT = {
 const StateSerializer = {
   STORAGE_KEY: 'wm-layout-state',
 
-  save(layoutRoot, floatingPanels, closedPanels) {
+  save(layoutRoot, floatingPanels, closedPanels, activeConfig) {
     const state = {
       version: 1,
       layout: this._serializeTree(layoutRoot),
       floating: floatingPanels || [],
       closedPanels: closedPanels || [],
+      activeConfig: activeConfig || WM_ACTIVE_CONFIG || 'Default',
       timestamp: Date.now(),
     };
     try { localStorage.setItem(this.STORAGE_KEY, JSON.stringify(state)); }
@@ -112,6 +153,7 @@ const PanelRegistry = {
     const entry = Object.assign({
       minWidth: 200, minHeight: 100,
       closable: true, floatable: true, defaultVisible: true,
+      strip: false,
     }, config);
     this._panels.set(config.id, entry);
     this._order.push(config.id);
@@ -243,6 +285,7 @@ class LayoutEngine {
       this._renderNode(node.children[1], second);
     }
   }
+
 
   _createPanelElement(panelId) {
     var config = PanelRegistry.get(panelId);
@@ -416,8 +459,15 @@ class LayoutEngine {
       var newPanel = { type: 'panel', panelId: panelId };
       var dir = (position === 'left' || position === 'right') ? 'horizontal' : 'vertical';
       var first = (position === 'left' || position === 'top');
+      // Strip panels get a tiny ratio so they appear as a thin strip
+      var panelConfig = PanelRegistry.get(panelId);
+      var ratio = 0.5;
+      if (panelConfig && panelConfig.strip) {
+        var stripRatio = 0.08;
+        ratio = first ? stripRatio : (1 - stripRatio);
+      }
       return {
-        type: 'split', direction: dir, ratio: 0.5,
+        type: 'split', direction: dir, ratio: ratio,
         children: first ? [newPanel, node] : [node, newPanel],
       };
     }
@@ -671,6 +721,9 @@ var WindowManager = {
     if (saved && saved.layout && this._validateLayout(saved.layout)) {
       layoutRoot = saved.layout;
     }
+    if (saved && saved.activeConfig) {
+      WM_ACTIVE_CONFIG = saved.activeConfig;
+    }
 
     this.layout   = new LayoutEngine(layoutRoot || WM_DEFAULT_LAYOUT);
     this.floating = new FloatingManager();
@@ -693,7 +746,9 @@ var WindowManager = {
     }
 
     this._setupViewMenu();
+    this._setupConfigMenu();
     this._updateViewMenu();
+    this._updateConfigMenu();
     window.addEventListener('beforeunload', function () { self._saveState(); });
   },
 
@@ -701,6 +756,7 @@ var WindowManager = {
     if (!this.container || !this.layout) return;
     this.layout.renderInto(this.container);
     this._wireUpDocking();
+    this._applyStripPanes();
     window.dispatchEvent(new CustomEvent('wm-panel-resize'));
   },
 
@@ -719,7 +775,9 @@ var WindowManager = {
   openPanel: function (panelId) {
     this.closedPanels.delete(panelId);
     var target = this.layout.findFirstPanelId(this.layout.root);
-    if (target) this.layout.insertPanel(panelId, target, 'right');
+    var config = PanelRegistry.get(panelId);
+    var position = (config && config.strip) ? 'bottom' : 'right';
+    if (target) this.layout.insertPanel(panelId, target, position);
     else        this.layout.root = { type: 'panel', panelId: panelId };
     this.rebuildLayout();
     this._saveState();
@@ -740,7 +798,9 @@ var WindowManager = {
     this.floating.dockBack(panelId, this.layout);
     this.closedPanels.delete(panelId);
     var target = this.layout.findFirstPanelId(this.layout.root);
-    if (target) this.layout.insertPanel(panelId, target, 'right');
+    var config = PanelRegistry.get(panelId);
+    var position = (config && config.strip) ? 'bottom' : 'right';
+    if (target) this.layout.insertPanel(panelId, target, position);
     else        this.layout.root = { type: 'panel', panelId: panelId };
     this.rebuildLayout();
     this._saveState();
@@ -754,10 +814,44 @@ var WindowManager = {
     this.layout._panelElements.forEach(function (el) { if (el.parentNode) el.parentNode.removeChild(el); });
     this.layout._panelElements.clear();
     this.closedPanels.clear();
-    this.layout.root = JSON.parse(JSON.stringify(WM_DEFAULT_LAYOUT));
+    var cfg = WM_LAYOUT_CONFIGS[WM_ACTIVE_CONFIG] || WM_LAYOUT_CONFIGS['Default'];
+    this.layout.root = JSON.parse(JSON.stringify(cfg.layout));
+    if (cfg.closedPanels) {
+      var self = this;
+      cfg.closedPanels.forEach(function(pid) { self.closedPanels.add(pid); });
+    }
     StateSerializer.clear();
     this.rebuildLayout();
     this._updateViewMenu();
+    this._updateConfigMenu();
+    this._triggerRerender();
+  },
+
+  /** Switch to a named layout configuration */
+  applyConfig: function (configName) {
+    var cfg = WM_LAYOUT_CONFIGS[configName];
+    if (!cfg) return;
+
+    WM_ACTIVE_CONFIG = configName;
+
+    // Tear down everything
+    this.floating.floatingPanels.forEach(function (el) { el.remove(); });
+    this.floating.floatingPanels.clear();
+    this.layout._panelElements.forEach(function (el) { if (el.parentNode) el.parentNode.removeChild(el); });
+    this.layout._panelElements.clear();
+    this.closedPanels.clear();
+
+    // Apply new layout tree
+    this.layout.root = JSON.parse(JSON.stringify(cfg.layout));
+    if (cfg.closedPanels) {
+      var self = this;
+      cfg.closedPanels.forEach(function(pid) { self.closedPanels.add(pid); });
+    }
+
+    this.rebuildLayout();
+    this._saveState();
+    this._updateViewMenu();
+    this._updateConfigMenu();
     this._triggerRerender();
   },
 
@@ -772,9 +866,57 @@ var WindowManager = {
     });
   },
 
+  /**
+   * Post-render DOM walk: find every strip panel and force its containing
+   * split-pane to auto-size.  Works regardless of tree nesting (tabs, deep
+   * splits, restored layouts, drag-and-drop, etc.).
+   */
+  _applyStripPanes: function () {
+    var container = this.container;
+    if (!container) return;
+    var allConfigs = PanelRegistry.getAll();
+    for (var i = 0; i < allConfigs.length; i++) {
+      var cfg = allConfigs[i];
+      if (!cfg.strip) continue;
+
+      var panelEl = container.querySelector('.wm-panel[data-panel-id="' + cfg.id + '"]');
+      if (!panelEl) continue;
+
+      // Walk up to the nearest split-pane wrapper
+      var pane = panelEl.closest('.wm-split-pane');
+      if (!pane) continue;
+
+      // Mark the strip pane (CSS handles the sizing via !important)
+      pane.classList.add('wm-split-pane-strip');
+      // Clear any inline flex that _renderNode set — let CSS !important take over
+      pane.style.flexBasis = '';
+      pane.style.flexGrow = '';
+      pane.style.flexShrink = '';
+      pane.style.flex = '';
+
+      // Find the parent split wrapper
+      var splitWrapper = pane.parentElement;
+      if (!splitWrapper || !splitWrapper.classList.contains('wm-split')) continue;
+
+      // Walk siblings: hide the splitter, make the other pane fill remaining space
+      var children = splitWrapper.children;
+      for (var j = 0; j < children.length; j++) {
+        var child = children[j];
+        if (child === pane) continue;
+        if (child.classList.contains('wm-splitter')) {
+          child.classList.add('wm-splitter-strip');
+        } else if (child.classList.contains('wm-split-pane')) {
+          // Sibling pane takes all remaining space
+          child.style.flex = '1 1 auto';
+          child.style.flexBasis = '';
+        }
+      }
+    }
+  },
+
   _saveState: function () {
     if (!this.layout) return;
-    StateSerializer.save(this.layout.root, this.floating.getState(), Array.from(this.closedPanels));
+    StateSerializer.save(this.layout.root, this.floating.getState(), Array.from(this.closedPanels), WM_ACTIVE_CONFIG);
   },
 
   _triggerRerender: function () {
@@ -801,8 +943,17 @@ var WindowManager = {
     var resetBtn = document.getElementById('wm-reset-btn');
     if (!btn || !menu) return;
 
-    btn.addEventListener('click', function (e) { e.stopPropagation(); menu.classList.toggle('open'); });
-    document.addEventListener('click', function () { menu.classList.remove('open'); });
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var cfgMenu = document.getElementById('wm-config-menu');
+      if (cfgMenu) cfgMenu.classList.remove('open');
+      menu.classList.toggle('open');
+    });
+    document.addEventListener('click', function () {
+      menu.classList.remove('open');
+      var cfgMenu = document.getElementById('wm-config-menu');
+      if (cfgMenu) cfgMenu.classList.remove('open');
+    });
     menu.addEventListener('click', function (e) { e.stopPropagation(); });
     if (resetBtn) resetBtn.addEventListener('click', function () { WindowManager.resetLayout(); });
   },
@@ -829,6 +980,52 @@ var WindowManager = {
         if (isF)      self.dockPanel(pid);
         else if (inL) self.closePanel(pid);
         else          self.openPanel(pid);
+      });
+    });
+  },
+
+  /* ── Layout Configuration Menu ─────────────────────────── */
+
+  _setupConfigMenu: function () {
+    var btn  = document.getElementById('wm-config-btn');
+    var menu = document.getElementById('wm-config-menu');
+    if (!btn || !menu) return;
+
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var viewMenu = document.getElementById('wm-view-menu');
+      if (viewMenu) viewMenu.classList.remove('open');
+      menu.classList.toggle('open');
+    });
+    menu.addEventListener('click', function (e) { e.stopPropagation(); });
+  },
+
+  _updateConfigMenu: function () {
+    var menu = document.getElementById('wm-config-menu');
+    var btn  = document.getElementById('wm-config-btn');
+    if (!menu) return;
+
+    var self = this;
+    var html = '';
+    var configNames = Object.keys(WM_LAYOUT_CONFIGS);
+    configNames.forEach(function (name) {
+      var isActive = (name === WM_ACTIVE_CONFIG);
+      html += '<div class="wm-view-item' + (isActive ? ' active' : '') + '" data-config="' + name + '">' +
+        '<span class="wm-view-check">' + (isActive ? '◆' : '') + '</span>' +
+        '<span>' + name + '</span></div>';
+    });
+    menu.innerHTML = html;
+
+    // Update button label
+    if (btn) btn.textContent = '◈ ' + WM_ACTIVE_CONFIG + ' ▾';
+
+    menu.querySelectorAll('.wm-view-item').forEach(function (item) {
+      item.addEventListener('click', function () {
+        var configName = item.dataset.config;
+        if (configName && configName !== WM_ACTIVE_CONFIG) {
+          self.applyConfig(configName);
+          menu.classList.remove('open');
+        }
       });
     });
   },

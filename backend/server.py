@@ -134,6 +134,9 @@ async def api_select_project(request: Request):
     # Clear in-memory caches so endpoints serve the new project
     _graph_cache.clear()
     _node_desc_cache.clear()
+    _preview_cache.clear()
+    _tts_audio_cache.clear()
+    _enrich_cache.clear()
     return {"status": "ok", "current_id": pid}
 
 
@@ -589,6 +592,310 @@ async def node_description(request: Request):
         description = resp.choices[0].message.content.strip()
         _node_desc_cache[cache_key] = description
         return {"description": description, "cached": False, "content_hash": content_hash}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ── Preview walkthrough endpoint ─────────────────────────────────────
+
+_preview_cache: dict[str, list] = {}  # (fingerprint|level) → scenes
+
+
+_CONTENT_TYPE_MAP = {
+    "database": "💾", "auth": "🔐", "network": "🌐", "user": "👤",
+    "email": "✉️", "payment": "💳", "file_io": "📁", "config": "🔧",
+    "logging": "📊", "test": "🧪", "error": "🚨", "cache": "⚡",
+    "scheduling": "⏰", "ui": "🖼️", "serialization": "🔄",
+    "search": "🔍", "cli": "⌨️", "ml": "🤖", "geo": "📍",
+    "math": "🧮", "deploy": "🚀", "service": "🎛️", "utility": "🔨",
+    "event": "📢", "data_model": "📋", "general": ">_",
+}
+
+_CONTENT_TYPES_LIST = list(_CONTENT_TYPE_MAP.keys())
+
+
+@app.post("/api/preview")
+async def generate_preview(request: Request):
+    """Generate a scripted architecture walkthrough at the requested abstraction level.
+
+    Body: {level: "high"|"medium"|"low"}
+
+    Returns: {scenes: [...], level: str}
+    Each scene: {narration, focus_node_ids, secondary_node_ids, edge_ids, camera, duration_hint}
+    """
+    body = await request.json()
+    level = body.get("level", "high")
+    if level not in ("high", "medium", "low"):
+        level = "high"
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "OPENAI_API_KEY not set"}, status_code=500)
+
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected"}, status_code=404)
+
+    # Pick graph data for abstraction level
+    if level == "low":
+        graph_dict = _get_or_analyze(abs_path, abstract=False)
+    else:
+        graph_dict = _get_or_analyze(abs_path, abstract=True)
+
+    nodes = graph_dict.get("nodes", [])
+    edges = graph_dict.get("edges", [])
+
+    # Cache key
+    node_ids_str = ",".join(sorted(n["id"] for n in nodes))
+    cache_key = hashlib.md5(f"{node_ids_str}|{level}".encode()).hexdigest()[:16]
+    if cache_key in _preview_cache:
+        return {"scenes": _preview_cache[cache_key], "level": level, "cached": True}
+
+    # Build context for the LLM
+    nodes_summary = []
+    for n in nodes:
+        entry = {"id": n["id"], "name": n["name"], "kind": n.get("kind", "")}
+        if n.get("file_path"):
+            entry["file"] = n["file_path"]
+        if n.get("members"):
+            entry["members"] = n["members"][:15]
+        if n.get("member_methods"):
+            entry["methods"] = n["member_methods"][:10]
+        if n.get("methods"):
+            entry["methods"] = n["methods"][:10]
+        if n.get("docstring"):
+            entry["doc"] = n["docstring"][:120]
+        nodes_summary.append(entry)
+
+    edges_summary = []
+    for e in edges:
+        src = e["source"] if isinstance(e["source"], str) else e["source"].get("id", str(e["source"]))
+        tgt = e["target"] if isinstance(e["target"], str) else e["target"].get("id", str(e["target"]))
+        edges_summary.append({"source": src, "target": tgt, "kind": e.get("kind", "")})
+
+    graph_context = json.dumps({"nodes": nodes_summary, "edges": edges_summary}, indent=1)
+
+    # Cap context size
+    if len(graph_context) > 12000:
+        graph_context = graph_context[:12000] + "\n… [truncated]"
+
+    scene_counts = {"high": "5-8", "medium": "8-15", "low": "12-20"}
+
+    system_msg = f"""You are narrating an architecture walkthrough in the voice of a skilled British SAS operator giving a briefing to a teammate mid-operation. You are direct, composed, and precise. Use short, punchy sentences. Occasional dry wit is acceptable. Avoid jargon overload — clarity is paramount. You never sound robotic or corporate.
+
+Output a JSON object with a single key "scenes" containing an array of scene objects.
+Each scene represents one step in the narration.
+
+Scene schema:
+{{
+  "narration": "1-3 sentences describing this part of the architecture",
+  "focus_node_ids": ["node_id_1"],
+  "secondary_node_ids": ["node_id_2"],
+  "edge_ids": [{{"source": "src_id", "target": "tgt_id"}}],
+  "camera": "zoom_to_focus" | "pan_to_focus" | "zoom_out_all" | "hold",
+  "duration_hint": 6
+}}
+
+Rules:
+- Start with a "zoom_out_all" scene giving a 1-sentence situational overview of the entire codebase
+- Walk through the architecture logically: entry points → core logic → data layer, or by cluster
+- End with a summary scene zoomed out
+- Reference nodes ONLY by their exact id from the provided graph
+- Keep narration concise and insight-rich — explain what things DO, not just their names
+- For high-level: focus on clusters and their relationships ({scene_counts['high']} scenes)
+- For medium-level: cover individual classes and key edges ({scene_counts['medium']} scenes)
+- For low-level: cover methods, call chains, and data flow ({scene_counts['low']} scenes)
+- duration_hint is in seconds (4-8 per scene)"""
+
+    user_msg = f"Generate a {level}-level architecture walkthrough for this graph:\n\n{graph_context}"
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key)
+
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.4,
+            max_completion_tokens=4000,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content.strip()
+        data = json.loads(raw)
+        scenes = data.get("scenes", data.get("script", []))
+        if isinstance(scenes, dict):
+            scenes = [scenes]
+        _preview_cache[cache_key] = scenes
+        return {"scenes": scenes, "level": level, "cached": False}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ── Preview TTS audio endpoint ──────────────────────────────────────
+
+_tts_audio_cache: dict[str, bytes] = {}  # text_hash → mp3 bytes
+
+
+@app.post("/api/preview/audio")
+async def preview_audio(request: Request):
+    """Convert narration text to speech via OpenAI TTS.
+
+    Body: {text: str}
+    Returns: audio/mpeg stream
+    """
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "No text provided"}, status_code=400)
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "OPENAI_API_KEY not set"}, status_code=500)
+
+    # Cache on text hash to avoid re-generating identical narrations
+    text_hash = hashlib.md5(text.encode()).hexdigest()[:16]
+    if text_hash in _tts_audio_cache:
+        return Response(
+            content=_tts_audio_cache[text_hash],
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "max-age=3600"},
+        )
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key)
+
+    try:
+        resp = await client.audio.speech.create(
+            model="tts-1",
+            voice="onyx",          # deep, authoritative male voice
+            input=text,
+            speed=1.05,            # slightly faster = clipped military cadence
+            response_format="mp3",
+        )
+        audio_bytes = resp.content
+        _tts_audio_cache[text_hash] = audio_bytes
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "max-age=3600"},
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ── Content classification enrichment endpoint ──────────────────────
+
+_enrich_cache: dict[str, dict] = {}  # fingerprint → {node_id: content_type}
+
+
+@app.post("/api/enrich")
+async def enrich_nodes(request: Request):
+    """Batch-classify nodes into content categories using the LLM.
+
+    Body: {nodes: [{id, name, kind, file_path?, methods?, members?, docstring?}]}
+
+    Returns: {classifications: {node_id: "icon_emoji"}, cached: bool}
+    """
+    body = await request.json()
+    req_nodes = body.get("nodes", [])
+    if not req_nodes:
+        return {"classifications": {}, "cached": True}
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "OPENAI_API_KEY not set"}, status_code=500)
+
+    # Build fingerprint for cache
+    fp_input = json.dumps(
+        sorted([{"id": n.get("id", ""), "name": n.get("name", "")} for n in req_nodes],
+               key=lambda x: x["id"]),
+        sort_keys=True,
+    )
+    fp = hashlib.md5(fp_input.encode()).hexdigest()[:16]
+    if fp in _enrich_cache:
+        return {"classifications": _enrich_cache[fp], "cached": True}
+
+    abs_root = _active_codebase_path()
+
+    # Build node descriptions for the LLM — include source snippets for leaf nodes
+    elements = []
+    for i, n in enumerate(req_nodes[:80]):  # cap at 80 nodes per batch
+        parts = [f'{i+1}. id="{n.get("id", "")}", name="{n.get("name", "")}", kind={n.get("kind", "")}']
+        if n.get("file_path"):
+            parts.append(f'file={n["file_path"]}')
+        if n.get("methods"):
+            parts.append(f'methods=[{", ".join(n["methods"][:8])}]')
+        if n.get("members"):
+            parts.append(f'members=[{", ".join(n["members"][:8])}]')
+        if n.get("member_methods"):
+            parts.append(f'functions=[{", ".join(n["member_methods"][:8])}]')
+        if n.get("docstring"):
+            parts.append(f'doc="{n["docstring"][:80]}"')
+        if n.get("bases"):
+            parts.append(f'bases=[{", ".join(n["bases"][:4])}]')
+
+        # Try to read a small snippet for leaf nodes
+        if abs_root and n.get("file_path") and n.get("line_start") and n.get("line_end"):
+            full = os.path.normpath(os.path.join(abs_root, n["file_path"]))
+            if os.path.isfile(full):
+                try:
+                    lines = Path(full).read_text(encoding="utf-8", errors="replace").splitlines()
+                    snippet_lines = lines[max(0, n["line_start"] - 1):min(n["line_end"], n["line_start"] + 15)]
+                    snippet = "\n".join(snippet_lines).strip()
+                    if snippet and len(snippet) < 400:
+                        parts.append(f'code_preview="""{snippet}"""')
+                except OSError:
+                    pass
+
+        elements.append(", ".join(parts))
+
+    content_types_str = ", ".join(_CONTENT_TYPES_LIST)
+
+    system_msg = f"""You are a code classification expert. Classify each code element into exactly one content category.
+
+Valid categories: {content_types_str}
+
+Output a JSON object with a single key "classifications" mapping each node id to its category string.
+Example: {{"classifications": {{"MyRepo": "database", "AuthService": "auth", "utils": "utility"}}}}
+
+Rules:
+- Use ONLY the exact category strings listed above
+- When uncertain, choose the most dominant purpose of the code
+- "general" is the fallback when nothing else fits
+- Be precise — look at method names, base classes, file paths, and code previews for clues"""
+
+    user_msg = "Classify these code elements:\n\n" + "\n".join(elements)
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key)
+
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.1,
+            max_completion_tokens=2000,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content.strip()
+        data = json.loads(raw)
+        classifications_raw = data.get("classifications", {})
+
+        # Map category strings to emoji icons
+        classifications = {}
+        for node_id, category in classifications_raw.items():
+            category = category.lower().strip()
+            icon = _CONTENT_TYPE_MAP.get(category, ">_")
+            classifications[node_id] = icon
+
+        _enrich_cache[fp] = classifications
+        return {"classifications": classifications, "cached": False}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
