@@ -44,7 +44,7 @@ const WM_LAYOUT_CONFIGS = {
           ratio: 0.5,
           children: [
             { type: 'panel', panelId: 'node-description' },
-            { type: 'tabs', panels: ['node-inspector', 'directory'], activeIndex: 0 },
+            { type: 'tabs', panels: ['node-inspector', 'directory', 'llm-chat'], activeIndex: 0 },
           ],
         },
       ],
@@ -94,9 +94,11 @@ const WM_DEFAULT_LAYOUT = WM_LAYOUT_CONFIGS['Default'].layout;
 const StateSerializer = {
   STORAGE_KEY: 'wm-layout-state',
 
+  _VERSION: 2,
+
   save(layoutRoot, floatingPanels, closedPanels, activeConfig) {
     const state = {
-      version: 1,
+      version: this._VERSION,
       layout: this._serializeTree(layoutRoot),
       floating: floatingPanels || [],
       closedPanels: closedPanels || [],
@@ -112,7 +114,7 @@ const StateSerializer = {
       const raw = localStorage.getItem(this.STORAGE_KEY);
       if (!raw) return null;
       const state = JSON.parse(raw);
-      return state && state.version === 1 ? state : null;
+      return state && state.version === this._VERSION ? state : null;
     } catch (_) { return null; }
   },
 

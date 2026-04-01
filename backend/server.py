@@ -18,8 +18,9 @@ from backend.analyzer import (
     analyze_codebase, abstract_graph,
     _load_from_cache, _save_to_cache, _ensure_cache_dir,
 )
+from backend.descriptors import generate_hierarchical_descriptions, _load_desc_cache
 from backend.insights import detect_insights
-from backend.llm_chat import stream_chat
+from backend.llm_chat import stream_chat, set_codebase_root, set_hier_descriptions
 from backend.projects import (
     list_projects, create_project, delete_project,
     get_current_project, get_current_project_id,
@@ -27,6 +28,12 @@ from backend.projects import (
 )
 
 app = FastAPI(title="VibeCodingAssistant", version="0.1.0")
+
+# ── LLM model from environment ──────────────────────────────────────
+
+def _llm_model() -> str:
+    """Return the configured LLM model name from LLM_MODEL env var."""
+    return os.environ.get("LLM_MODEL", "gpt-5.4-mini")
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +44,7 @@ app.add_middleware(
 
 # In-memory cache of analysis results by options
 _graph_cache: dict[str, dict] = {}
+_hier_desc_cache: dict[str, dict] = {}  # abs_path → hierarchical descriptions
 
 
 def _cache_key(repo_path: str, abstract: bool) -> str:
@@ -137,6 +145,7 @@ async def api_select_project(request: Request):
     _preview_cache.clear()
     _tts_audio_cache.clear()
     _enrich_cache.clear()
+    _hier_desc_cache.clear()
     return {"status": "ok", "current_id": pid}
 
 
@@ -155,6 +164,12 @@ def chrome_devtools_probe():
     return Response(status_code=204)
 
 
+@app.get("/favicon.ico")
+def favicon():
+    """Return empty response for favicon requests."""
+    return Response(status_code=204)
+
+
 # ── Filesystem browser endpoint ─────────────────────────────────────
 
 _BROWSE_IGNORE = {
@@ -163,6 +178,36 @@ _BROWSE_IGNORE = {
     ".eggs", ".next", ".nuxt", "coverage", ".nyc_output",
     "bower_components", ".venv", "venv", "env",
 }
+
+
+@app.post("/api/mkdir")
+async def api_mkdir(request: Request):
+    """Create a new directory.  Body: {path}.
+
+    Returns ``{path}`` with the absolute path of the created directory.
+    """
+    body = await request.json()
+    raw_path = body.get("path", "").strip()
+    if not raw_path:
+        return JSONResponse({"error": "Path is required."}, status_code=400)
+
+    abs_path = os.path.abspath(os.path.expanduser(raw_path))
+
+    # Don't allow creating a directory that already exists
+    if os.path.exists(abs_path):
+        return JSONResponse({"error": f"Already exists: {abs_path}"}, status_code=409)
+
+    # Parent must exist
+    parent = os.path.dirname(abs_path)
+    if not os.path.isdir(parent):
+        return JSONResponse({"error": f"Parent directory not found: {parent}"}, status_code=400)
+
+    try:
+        os.makedirs(abs_path, exist_ok=False)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    return {"path": abs_path}
 
 
 @app.get("/api/browse")
@@ -225,6 +270,51 @@ def get_graph(
     return payload
 
 
+@app.post("/api/graph/refresh")
+def refresh_graph():
+    """Lightweight graph refresh — clears only graph and position caches,
+    then re-runs the analyzer.  Descriptions, enrichments, and insights
+    are left intact.  Designed for real-time updates when the AI agent
+    creates / edits / deletes files.
+    """
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected."}, status_code=404)
+
+    # Clear graph memory caches for this project
+    keys_to_remove = [k for k in _graph_cache if k.startswith(abs_path + "|")]
+    for k in keys_to_remove:
+        del _graph_cache[k]
+
+    # Clear graph + position disk caches for this project
+    try:
+        cache_dir = _ensure_cache_dir()
+        dir_hash_10 = hashlib.md5(abs_path.encode()).hexdigest()[:10]
+        for f in cache_dir.iterdir():
+            if not f.is_file():
+                continue
+            name = f.name
+            # Analyzer graph caches: {dir_hash_10}_{tag}.json
+            if name.startswith(dir_hash_10 + "_"):
+                f.unlink(missing_ok=True)
+            # Position caches: positions_{hash}.json
+            elif name.startswith("positions_"):
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    # Re-run analysis (both abstract and full)
+    payload_full = _get_or_analyze(abs_path, abstract=False)
+    payload_abstract = _get_or_analyze(abs_path, abstract=True)
+
+    return {
+        "status": "ok",
+        "nodes": len(payload_full["nodes"]),
+        "edges": len(payload_full["edges"]),
+        "abstract_nodes": len(payload_abstract["nodes"]),
+    }
+
+
 @app.get("/api/insights")
 def get_insights():
     """Run pattern detection rules against the full (non-abstract) graph."""
@@ -235,6 +325,54 @@ def get_insights():
     graph_dict = _get_or_analyze(abs_path, abstract=False)
     insights = detect_insights(graph_dict)
     return {"insights": insights, "count": len(insights)}
+
+
+@app.post("/api/reanalyze")
+def reanalyze():
+    """Clear all caches and re-run analysis for the active project.
+
+    This forces a full re-parse of the codebase and regeneration of
+    all derived data (graph, descriptions, insights, enrichments).
+    """
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected."}, status_code=404)
+
+    # Clear all in-memory caches
+    _graph_cache.clear()
+    _node_desc_cache.clear()
+    _preview_cache.clear()
+    _tts_audio_cache.clear()
+    _enrich_cache.clear()
+    _hier_desc_cache.clear()
+
+    # Clear disk caches for this project
+    try:
+        cache_dir = _ensure_cache_dir()
+        dir_hash_10 = hashlib.md5(abs_path.encode()).hexdigest()[:10]
+        dir_hash_12 = hashlib.md5(abs_path.encode()).hexdigest()[:12]
+        for f in cache_dir.iterdir():
+            if not f.is_file():
+                continue
+            name = f.name
+            # Analyzer graph caches: {dir_hash_10}_{tag}.json
+            if name.startswith(dir_hash_10 + "_"):
+                f.unlink(missing_ok=True)
+            # Description caches: descriptions_{dir_hash_12}.json
+            elif name.startswith(f"descriptions_{dir_hash_12}"):
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass  # best-effort cleanup
+
+    # Re-run analysis
+    payload = _get_or_analyze(abs_path, abstract=False)
+    _ = _get_or_analyze(abs_path, abstract=True)
+
+    return {
+        "status": "ok",
+        "nodes": len(payload["nodes"]),
+        "edges": len(payload["edges"]),
+    }
 
 
 # ── Position cache endpoints ────────────────────────────────────────
@@ -420,6 +558,41 @@ def get_files():
     return tree
 
 
+@app.get("/api/fs/checksum")
+def fs_checksum():
+    """Return a lightweight hash of all code files in the active project.
+
+    Walks the codebase collecting ``(relative_path, mtime, size)`` for every
+    code file, then hashes the sorted list.  The frontend polls this to
+    detect external filesystem changes (files created / edited / deleted
+    outside the app).
+    """
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected."}, status_code=404)
+
+    entries: list[str] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(abs_path):
+            dirnames[:] = [d for d in dirnames if d not in _IGNORE_DIRS]
+            for fname in sorted(filenames):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in _CODE_EXTENSIONS:
+                    continue
+                full = os.path.join(dirpath, fname)
+                rel = os.path.relpath(full, abs_path)
+                try:
+                    st = os.stat(full)
+                    entries.append(f"{rel}|{st.st_mtime_ns}|{st.st_size}")
+                except OSError:
+                    entries.append(f"{rel}|?|?")
+    except OSError:
+        pass
+
+    digest = hashlib.md5("\n".join(entries).encode()).hexdigest()
+    return {"checksum": digest, "file_count": len(entries)}
+
+
 @app.get("/api/source")
 def get_source(path: str = Query(..., description="Relative file path within the codebase")):
     """Return the source code of a file within the active project."""
@@ -581,7 +754,7 @@ async def node_description(request: Request):
             "No markdown, no bullet points."
         )
         resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_llm_model(),
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -594,6 +767,161 @@ async def node_description(request: Request):
         return {"description": description, "cached": False, "content_hash": content_hash}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ── Hierarchical description endpoints ───────────────────────────────
+
+import asyncio as _asyncio
+
+# Background task state
+_desc_task: _asyncio.Task | None = None
+_desc_progress: dict = {"status": "idle", "done": 0, "total": 0, "current_node": ""}
+
+
+def _build_merged_graph(abs_path: str) -> dict:
+    """Build the merged graph dict needed for hierarchical descriptions."""
+    full_graph = _get_or_analyze(abs_path, abstract=False)
+    abstract_graph_dict = _get_or_analyze(abs_path, abstract=True)
+
+    merged = {
+        "nodes": abstract_graph_dict.get("nodes", []),
+        "edges": abstract_graph_dict.get("edges", []),
+        "intermediate_nodes": (
+            abstract_graph_dict.get("intermediate_nodes", []) +
+            full_graph.get("nodes", [])
+        ),
+        "intermediate_edges": (
+            abstract_graph_dict.get("intermediate_edges", []) +
+            full_graph.get("edges", [])
+        ),
+    }
+
+    seen_ids = {n["id"] for n in merged["nodes"]}
+    deduped = []
+    for n in merged["intermediate_nodes"]:
+        if n["id"] not in seen_ids:
+            deduped.append(n)
+            seen_ids.add(n["id"])
+    merged["intermediate_nodes"] = deduped
+    return merged
+
+
+async def _run_describe_background(abs_path: str, api_key: str, force: bool):
+    """Background coroutine that generates descriptions and updates progress."""
+    global _desc_progress
+
+    async def _progress(done, total, name):
+        _desc_progress["done"] = done
+        _desc_progress["total"] = total
+        _desc_progress["current_node"] = name
+
+    try:
+        _desc_progress = {"status": "running", "done": 0, "total": 0, "current_node": "analysing codebase…"}
+
+        # Run synchronous graph building in a thread to avoid blocking event loop
+        merged = await _asyncio.to_thread(_build_merged_graph, abs_path)
+
+        _desc_progress["current_node"] = "computing hashes…"
+
+        descriptions = await generate_hierarchical_descriptions(
+            root_dir=abs_path,
+            graph_dict=merged,
+            api_key=api_key,
+            force=force,
+            progress_callback=_progress,
+        )
+
+        _hier_desc_cache[abs_path] = descriptions
+        _desc_progress = {
+            "status": "done",
+            "done": _desc_progress.get("total", len(descriptions)),
+            "total": _desc_progress.get("total", len(descriptions)),
+            "current_node": "",
+        }
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        _desc_progress = {"status": "error", "done": 0, "total": 0,
+                          "current_node": "", "error": str(exc)}
+
+
+@app.post("/api/describe")
+async def describe_hierarchy(request: Request):
+    """Kick off hierarchical description generation in the background.
+
+    Body: {force?: bool}
+
+    Returns immediately with {status: "started"} or {status: "already_running"}.
+    Poll GET /api/describe/status for progress.
+    When done, GET /api/describe returns the descriptions.
+    """
+    global _desc_task
+    body = await request.json()
+    force = body.get("force", False)
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "OPENAI_API_KEY not set"}, status_code=500)
+
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected"}, status_code=404)
+
+    # If already running, don't start another
+    if _desc_task is not None and not _desc_task.done():
+        return {"status": "already_running", "progress": _desc_progress}
+
+    # Set progress to running immediately (before the task coroutine starts)
+    # to avoid a race where status returns "idle" right after task creation
+    _desc_progress.update({"status": "running", "done": 0, "total": 0, "current_node": "starting…"})
+
+    _desc_task = _asyncio.create_task(
+        _run_describe_background(abs_path, api_key, force)
+    )
+    return {"status": "started"}
+
+
+@app.get("/api/describe/status")
+def describe_status():
+    """Return the current description-generation progress."""
+    running = _desc_task is not None and not _desc_task.done()
+    return {
+        "running": running,
+        **_desc_progress,
+    }
+
+
+@app.get("/api/describe")
+def get_descriptions():
+    """Return cached hierarchical descriptions (disk cache) without regenerating."""
+    abs_path = _active_codebase_path()
+    if not abs_path:
+        return JSONResponse({"error": "No project selected"}, status_code=404)
+
+    # Check memory cache first
+    if abs_path in _hier_desc_cache:
+        descs = _hier_desc_cache[abs_path]
+        return {
+            "descriptions": descs,
+            "cached": True,
+            "generating": _desc_task is not None and not _desc_task.done(),
+        }
+
+    # Fall back to disk cache
+    cached = _load_desc_cache(abs_path)
+    if cached:
+        _hier_desc_cache[abs_path] = cached
+        return {
+            "descriptions": cached,
+            "cached": True,
+            "generating": _desc_task is not None and not _desc_task.done(),
+        }
+
+    return {
+        "descriptions": {},
+        "cached": False,
+        "generating": _desc_task is not None and not _desc_task.done(),
+    }
 
 
 # ── Preview walkthrough endpoint ─────────────────────────────────────
@@ -616,15 +944,22 @@ _CONTENT_TYPES_LIST = list(_CONTENT_TYPE_MAP.keys())
 
 @app.post("/api/preview")
 async def generate_preview(request: Request):
-    """Generate a scripted architecture walkthrough at the requested abstraction level.
+    """Generate a scripted architecture walkthrough driven by the description hierarchy.
 
-    Body: {level: "high"|"medium"|"low"}
+    Body: {level: "high"|"medium"|"low", focus_node_id?: str}
+
+    High-level:  root + direct children → explains what the codebase *does*
+    Medium-level: children + grandchildren → explains key subsystems / classes
+    Low-level:   grandchildren + leaf methods → explains specific behaviour
+
+    If focus_node_id is given, the walkthrough starts from that node's
+    context in the hierarchy (its parent for framing, its children for detail).
 
     Returns: {scenes: [...], level: str}
-    Each scene: {narration, focus_node_ids, secondary_node_ids, edge_ids, camera, duration_hint}
     """
     body = await request.json()
     level = body.get("level", "high")
+    focus_node_id = body.get("focus_node_id")
     if level not in ("high", "medium", "low"):
         level = "high"
 
@@ -636,7 +971,15 @@ async def generate_preview(request: Request):
     if not abs_path:
         return JSONResponse({"error": "No project selected"}, status_code=404)
 
-    # Pick graph data for abstraction level
+    # Load hierarchical descriptions — these are the ground truth
+    hier_descs = _hier_desc_cache.get(abs_path) or _load_desc_cache(abs_path)
+    if not hier_descs:
+        return JSONResponse(
+            {"error": "Descriptions not yet generated. Please wait for description generation to complete."},
+            status_code=409,
+        )
+
+    # Load graph data for node IDs that the frontend can focus on
     if level == "low":
         graph_dict = _get_or_analyze(abs_path, abstract=False)
     else:
@@ -644,77 +987,309 @@ async def generate_preview(request: Request):
 
     nodes = graph_dict.get("nodes", [])
     edges = graph_dict.get("edges", [])
+    node_id_set = {n["id"] for n in nodes}
 
-    # Cache key
-    node_ids_str = ",".join(sorted(n["id"] for n in nodes))
-    cache_key = hashlib.md5(f"{node_ids_str}|{level}".encode()).hexdigest()[:16]
+    # ── Build the description context for the LLM based on level ────
+
+    def _desc_entry(nid: str) -> dict | None:
+        """Return a compact description dict for a node, or None."""
+        entry = hier_descs.get(nid)
+        if not entry:
+            return None
+        return {
+            "id": nid,
+            "name": entry.get("name", "?"),
+            "kind": entry.get("kind", "?"),
+            "description": entry.get("description", ""),
+            "level": entry.get("level", 0),
+            "children_ids": entry.get("children_ids", []),
+        }
+
+    def _collect_children(nid: str, depth: int = 1) -> list[dict]:
+        """Recursively collect description entries for children up to depth."""
+        entry = hier_descs.get(nid, {})
+        kids = entry.get("children_ids", [])
+        result = []
+        for kid in kids:
+            child_entry = _desc_entry(kid)
+            if child_entry:
+                result.append(child_entry)
+                if depth > 1:
+                    result.extend(_collect_children(kid, depth - 1))
+        return result
+
+    root_entry = _desc_entry("__root__")
+    context_nodes = []  # description entries to send to LLM
+    walkthrough_scope = ""  # human-readable scope description
+
+    if focus_node_id and focus_node_id in hier_descs:
+        # ── Focused walkthrough: start from a specific node ─────────
+        focus_entry = _desc_entry(focus_node_id)
+        if focus_entry:
+            # Find the parent for framing context
+            parent_entry = None
+            for nid, entry in hier_descs.items():
+                if focus_node_id in entry.get("children_ids", []):
+                    parent_entry = _desc_entry(nid)
+                    break
+
+            if parent_entry:
+                context_nodes.append(parent_entry)
+            context_nodes.append(focus_entry)
+            # Add children based on level
+            child_depth = {"high": 1, "medium": 2, "low": 3}.get(level, 1)
+            context_nodes.extend(_collect_children(focus_node_id, child_depth))
+            walkthrough_scope = (
+                f"Focused on '{focus_entry['name']}' ({focus_entry['kind']}). "
+                f"Explain its purpose in the broader system, then walk through "
+                f"its internals at {'high' if level == 'high' else 'detailed'} level."
+            )
+    else:
+        # ── Full codebase walkthrough ───────────────────────────────
+        if level == "high":
+            # Root + children + grandchildren for richer context
+            if root_entry:
+                context_nodes.append(root_entry)
+            context_nodes.extend(_collect_children("__root__", depth=2))
+            walkthrough_scope = (
+                "Give a high-level overview of what this SOFTWARE does for its USERS. "
+                "Many of the descriptions below describe infrastructure components "
+                "(UI layout, HTTP servers, window managers, file I/O, caching). "
+                "Those are HOW the software works internally — ignore them. "
+                "Instead, find the components that describe the software's actual "
+                "PURPOSE and CAPABILITIES — the thing a user launches this app to do. "
+                "Think: what problem does this software solve? What does it produce? "
+                "Who uses it and why?"
+            )
+
+        elif level == "medium":
+            # Root + children + grandchildren → subsystems & key classes
+            if root_entry:
+                context_nodes.append(root_entry)
+            context_nodes.extend(_collect_children("__root__", depth=2))
+            walkthrough_scope = (
+                "Walk through the codebase's key subsystems and important classes. "
+                "Start with a brief recap of the codebase's purpose, then dive into "
+                "each major area: what it handles, its key classes, and how data flows "
+                "between subsystems. The audience understands the high-level purpose — "
+                "now they want to understand the architecture."
+            )
+
+        else:  # low
+            # Full depth → methods, call chains, data flow
+            if root_entry:
+                context_nodes.append(root_entry)
+            context_nodes.extend(_collect_children("__root__", depth=4))
+            walkthrough_scope = (
+                "Walk through the codebase at implementation level: specific methods, "
+                "call chains, and data flow. Start with a one-sentence purpose recap, "
+                "then trace how data enters the system, is processed, and exits. "
+                "Name specific methods, parameters, and return values."
+            )
+
+    # ── Cache key ───────────────────────────────────────────────────
+    ctx_ids = sorted(e["id"] for e in context_nodes)
+    cache_input = f"{','.join(ctx_ids)}|{level}|{focus_node_id or ''}"
+    cache_key = hashlib.md5(cache_input.encode()).hexdigest()[:16]
     if cache_key in _preview_cache:
         return {"scenes": _preview_cache[cache_key], "level": level, "cached": True}
 
-    # Build context for the LLM
-    nodes_summary = []
+    # ── Build LLM context ──────────────────────────────────────────
+    # Provide descriptions as a hierarchy the LLM can read
+    desc_lines = []
+    for entry in context_nodes:
+        indent = "  " * entry.get("level", 0)
+        kids = entry.get("children_ids", [])
+        kid_names = []
+        for kid in kids[:10]:
+            k = hier_descs.get(kid, {})
+            kid_names.append(k.get("name", kid))
+        kid_str = f" [contains: {', '.join(kid_names)}]" if kid_names else ""
+        desc_lines.append(
+            f"{indent}• [{entry['id']}] {entry['name']} ({entry['kind']}){kid_str}\n"
+            f"{indent}  {entry['description'][:500]}"
+        )
+
+    descriptions_context = "\n\n".join(desc_lines)
+
+    # Also provide the graph node IDs so the LLM can reference them for camera focus
+    visible_nodes = []
     for n in nodes:
-        entry = {"id": n["id"], "name": n["name"], "kind": n.get("kind", "")}
-        if n.get("file_path"):
-            entry["file"] = n["file_path"]
-        if n.get("members"):
-            entry["members"] = n["members"][:15]
-        if n.get("member_methods"):
-            entry["methods"] = n["member_methods"][:10]
-        if n.get("methods"):
-            entry["methods"] = n["methods"][:10]
-        if n.get("docstring"):
-            entry["doc"] = n["docstring"][:120]
-        nodes_summary.append(entry)
+        visible_nodes.append({"id": n["id"], "name": n["name"], "kind": n.get("kind", "")})
 
     edges_summary = []
-    for e in edges:
-        src = e["source"] if isinstance(e["source"], str) else e["source"].get("id", str(e["source"]))
-        tgt = e["target"] if isinstance(e["target"], str) else e["target"].get("id", str(e["target"]))
+    for e in edges[:40]:
+        src = e["source"] if isinstance(e["source"], str) else e["source"].get("id", "")
+        tgt = e["target"] if isinstance(e["target"], str) else e["target"].get("id", "")
         edges_summary.append({"source": src, "target": tgt, "kind": e.get("kind", "")})
 
-    graph_context = json.dumps({"nodes": nodes_summary, "edges": edges_summary}, indent=1)
+    graph_ref = json.dumps({"visible_nodes": visible_nodes, "edges": edges_summary}, indent=1)
+    if len(graph_ref) > 6000:
+        graph_ref = graph_ref[:6000] + "\n… [truncated]"
 
-    # Cap context size
-    if len(graph_context) > 12000:
-        graph_context = graph_context[:12000] + "\n… [truncated]"
+    # ── Build level-specific system prompt ──────────────────────────
 
-    scene_counts = {"high": "5-8", "medium": "8-15", "low": "12-20"}
-
-    system_msg = f"""You are narrating an architecture walkthrough in the voice of a skilled British SAS operator giving a briefing to a teammate mid-operation. You are direct, composed, and precise. Use short, punchy sentences. Occasional dry wit is acceptable. Avoid jargon overload — clarity is paramount. You never sound robotic or corporate.
-
-Output a JSON object with a single key "scenes" containing an array of scene objects.
-Each scene represents one step in the narration.
-
+    _scene_schema = """\
 Scene schema:
-{{
-  "narration": "1-3 sentences describing this part of the architecture",
-  "focus_node_ids": ["node_id_1"],
-  "secondary_node_ids": ["node_id_2"],
-  "edge_ids": [{{"source": "src_id", "target": "tgt_id"}}],
+{
+  "narration": "1-3 sentences",
+  "focus_node_ids": ["node_id"],
+  "secondary_node_ids": ["node_id"],
+  "edge_ids": [{"source": "src_id", "target": "tgt_id"}],
   "camera": "zoom_to_focus" | "pan_to_focus" | "zoom_out_all" | "hold",
   "duration_hint": 6
-}}
+}"""
+
+    _shared_rules = """\
+- Output a JSON object: {"scenes": [...]}
+- Reference nodes ONLY by their exact id from VISIBLE GRAPH NODES
+- focus_node_ids must exist in VISIBLE GRAPH NODES
+- duration_hint in seconds (5-10 per scene)"""
+
+    # ── Static UI terminology (always valid — describes the visualisation tool) ──
+    _tool_ui_terms = """\
+You are narrating inside an interactive architecture-graph visualisation tool. Use these UI terms — they are what the user sees on screen:
+- "node" = a box on the graph representing a class, method, or group of related classes
+- "edge" = a line connecting two nodes showing a relationship (calls, inherits, imports, instantiates, uses_type)
+- "graph" = the interactive architecture visualisation the user is looking at right now
+- "drill down" / "dig down" = double-clicking a node to zoom into its internal structure (methods, sub-classes)
+- "island chain" = a cluster of related classes grouped together by shared relationships
+- "abstract view" = the high-level grouped view showing island chains and groups
+- "full view" = the detailed view showing every individual class
+- "walkthrough" = the animated narrated tour you are generating right now
+- "insights" = detected architectural patterns and anti-patterns (circular dependencies, god classes, orphan modules)
+- "node description" = the AI-generated description shown when hovering over a node
+- "breadcrumb" = the navigation trail showing the current drill-down path (e.g. Overview > Services > UserService)
+- "edges" have kinds: "calls" (method invocation), "inherits" (class inheritance), "imports" (module import), "contains" (parent→child), "instantiates" (object creation), "uses_type" (type reference)
+
+Use these terms naturally in your narration. The user is looking at this graph UI while listening."""
+
+    # ── Dynamic glossary built from the analysed codebase's own descriptions ──
+    def _build_target_app_glossary(descs: dict) -> str:
+        """Build a glossary of the TARGET codebase from its hierarchical descriptions.
+
+        This extracts the root overview and top-level subsystem names so the LLM
+        knows what the analysed software is about — works for ANY codebase.
+        """
+        lines = []
+        root = descs.get("__root__", {})
+        root_desc = root.get("description", "").strip()
+        root_name = root.get("name", "Unknown")
+        if root_desc:
+            lines.append(f"The software being analysed is: {root_name}")
+            lines.append(f"Overview: {root_desc[:600]}")
+
+        # Top-level subsystems / components
+        root_children = root.get("children_ids", [])
+        if root_children:
+            subsystem_lines = []
+            for cid in root_children[:15]:
+                child = descs.get(cid, {})
+                cname = child.get("name", cid)
+                cdesc = child.get("description", "").strip()
+                if cdesc:
+                    subsystem_lines.append(f"  • {cname}: {cdesc[:200]}")
+                else:
+                    subsystem_lines.append(f"  • {cname}")
+            if subsystem_lines:
+                lines.append("Key subsystems/components:")
+                lines.extend(subsystem_lines)
+
+        if not lines:
+            return "No prior knowledge of this software is available — rely on the DESCRIPTIONS provided below."
+
+        return "\n".join(lines)
+
+    _target_glossary = _build_target_app_glossary(hier_descs)
+
+    if level == "high":
+        scene_count = "4-6"
+        system_msg = f"""You are narrating a high-level product overview of a software system displayed as an interactive architecture graph. Your audience has never seen this codebase. Explain what this software IS and what it DOES — like a senior engineer explaining the product to a new team member while pointing at the graph on screen.
+
+{_tool_ui_terms}
+
+── ABOUT THE ANALYSED SOFTWARE ──
+{_target_glossary}
+
+You will be given DESCRIPTIONS of components. READ them, UNDERSTAND the purpose they serve, and SYNTHESIZE a clear explanation of the software's purpose and capabilities.
+
+Use the graph UI terminology (nodes, edges, graphs, drill down, etc.) when describing how to explore the codebase. But do NOT name internal Python/JS class names or method names at this level — refer to capabilities and subsystems instead.
+
+{_scene_schema}
 
 Rules:
-- Start with a "zoom_out_all" scene giving a 1-sentence situational overview of the entire codebase
-- Walk through the architecture logically: entry points → core logic → data layer, or by cluster
-- End with a summary scene zoomed out
-- Reference nodes ONLY by their exact id from the provided graph
-- Keep narration concise and insight-rich — explain what things DO, not just their names
-- For high-level: focus on clusters and their relationships ({scene_counts['high']} scenes)
-- For medium-level: cover individual classes and key edges ({scene_counts['medium']} scenes)
-- For low-level: cover methods, call chains, and data flow ({scene_counts['low']} scenes)
-- duration_hint is in seconds (4-8 per scene)"""
+{_shared_rules}
+- Generate {scene_count} scenes
+- {walkthrough_scope}
+- Opening scene: "zoom_out_all" — one clear sentence stating what the software is and does, referencing the graph the user is seeing
+- Subsequent scenes: walk through the major CAPABILITIES — what can it do? Point out the relevant nodes/groups on the graph as you explain
+- Final scene: "zoom_out_all" — summarize and mention how the user can drill down into any node to explore further
+- Tone: clear, confident, professional. Every sentence must convey information.
+- Refer to what the user can SEE on the graph — "this node represents...", "the edges between these nodes show...", "you can drill down into this group to see..."
+- Do NOT just list component names — explain what each area DOES and how they connect"""
 
-    user_msg = f"Generate a {level}-level architecture walkthrough for this graph:\n\n{graph_context}"
+    elif level == "medium":
+        scene_count = "6-12"
+        system_msg = f"""You are narrating an architecture walkthrough for a developer who already knows what this software does and now wants to understand how it is built. Be direct and precise. Short sentences. No filler.
+
+{_tool_ui_terms}
+
+── ABOUT THE ANALYSED SOFTWARE ──
+{_target_glossary}
+
+You will be given DESCRIPTIONS of components at various levels. Use them as ground truth to explain the architecture: what the major subsystems are, what each one is responsible for, and how data flows between them. Name the nodes and groups visible on the graph. Refer to edges to explain relationships.
+
+{_scene_schema}
+
+Rules:
+{_shared_rules}
+- Generate {scene_count} scenes
+- {walkthrough_scope}
+- Opening scene: "zoom_out_all" — one sentence recapping the software's purpose, then transition to architecture
+- Walk through logically: entry points → core processing → data layer → output
+- Name the nodes and groups on the graph and explain what each handles
+- Reference edges to explain how data flows between subsystems
+- Mention where the user can drill down for more detail
+- Final scene: "zoom_out_all" — summarize the architectural pattern
+- Tone: direct, technical but accessible. Like a senior engineer briefing a new teammate while pointing at the architecture graph."""
+
+    else:  # low
+        scene_count = "10-18"
+        system_msg = f"""You are narrating a detailed code walkthrough for a developer who wants to understand the implementation. Be precise and specific. Name methods, parameters, and return types. Trace call chains and data flow.
+
+{_tool_ui_terms}
+
+── ABOUT THE ANALYSED SOFTWARE ──
+{_target_glossary}
+
+You will be given DESCRIPTIONS of components including leaf-level methods. Use them to trace how specific operations work end-to-end. Reference the actual nodes and edges visible on the graph.
+
+{_scene_schema}
+
+Rules:
+{_shared_rules}
+- Generate {scene_count} scenes
+- {walkthrough_scope}
+- Opening scene: "zoom_out_all" — one sentence on the software's purpose
+- Then trace specific operations: how does a request enter? What methods process it? What gets returned?
+- Name specific methods, their parameters, and return values — point to the nodes on the graph
+- Show call chains via edge_ids where relevant, explaining "this node calls that node"
+- Mention drill-down paths: "if you drill down into this node, you'll see..."
+- Final scene: "zoom_out_all" — key implementation patterns
+- Tone: precise, technical. Like a senior engineer walking through the code while pointing at the architecture graph."""
+
+    user_msg = (
+        f"Generate a {level}-level architecture walkthrough.\n\n"
+        f"── DESCRIPTIONS (ground truth) ──\n{descriptions_context}\n\n"
+        f"── VISIBLE GRAPH NODES (for camera focus) ──\n{graph_ref}"
+    )
 
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=api_key)
 
     try:
         resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_llm_model(),
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -874,7 +1449,7 @@ Rules:
 
     try:
         resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_llm_model(),
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -903,22 +1478,28 @@ Rules:
 @app.get("/api/chat/models")
 def get_chat_models():
     """Return available LLM models for the chat panel."""
-    return {
-        "models": [
-            {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "default": True},
-            {"id": "gpt-4o", "name": "GPT-4o"},
-            {"id": "gpt-4.1-mini", "name": "GPT-4.1 Mini"},
-            {"id": "gpt-4.1", "name": "GPT-4.1"},
-        ]
-    }
+    configured = _llm_model()
+    models = [
+        {"id": "gpt-5.4-mini", "name": "GPT-5.4 Mini"},
+        {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+        {"id": "gpt-4o", "name": "GPT-4o"},
+        {"id": "gpt-4.1-mini", "name": "GPT-4.1 Mini"},
+        {"id": "gpt-4.1", "name": "GPT-4.1"},
+    ]
+    for m in models:
+        m["default"] = m["id"] == configured
+    return {"models": models}
 
 
 @app.post("/api/chat")
 async def chat_endpoint(request: Request):
-    """Stream an LLM chat response with tool-use. Body: {messages, model?}."""
+    """Stream an LLM chat response with tool-use. Body: {messages, model?, mode?}."""
     body = await request.json()
     messages = body.get("messages", [])
-    model = body.get("model", "gpt-4o-mini")
+    model = body.get("model", _llm_model())
+    mode = body.get("mode", "ask")  # "ask" or "agent"
+    if mode not in ("ask", "agent"):
+        mode = "ask"
 
     if not messages:
         return JSONResponse({"error": "No messages provided."}, status_code=400)
@@ -932,8 +1513,13 @@ async def chat_endpoint(request: Request):
         except Exception:
             pass
 
+    # Provide codebase context to chat tool implementations
+    set_codebase_root(abs_path)
+    hier_descs = _hier_desc_cache.get(abs_path) or (_load_desc_cache(abs_path) if abs_path else None)
+    set_hier_descriptions(hier_descs)
+
     return StreamingResponse(
-        stream_chat(messages, model=model, graph_dict=graph_dict),
+        stream_chat(messages, model=model, graph_dict=graph_dict, mode=mode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

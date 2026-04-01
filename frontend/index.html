@@ -63,14 +63,14 @@
   }
   #wm-toolbar::before { content:'◆'; color:var(--accent); font-size:10px; margin-right:2px; text-shadow:0 0 8px var(--accent-glow); }
   .wm-toolbar-group { position:relative; }
-  #wm-view-btn, #wm-reset-btn, #wm-export-btn, #wm-config-btn {
+  #wm-view-btn, #wm-reset-btn, #wm-export-btn, #wm-config-btn, #wm-reanalyze-btn {
     background:var(--surface-alt); border:1px solid var(--border); color:var(--text-muted);
     cursor:pointer; font-size:11px; padding:3px 10px;
     font-family:'Rajdhani',sans-serif; font-weight:600;
     text-transform:uppercase; letter-spacing:1px;
     clip-path:var(--clip-sm); transition:all .15s;
   }
-  #wm-view-btn:hover, #wm-reset-btn:hover, #wm-export-btn:hover, #wm-config-btn:hover {
+  #wm-view-btn:hover, #wm-reset-btn:hover, #wm-export-btn:hover, #wm-config-btn:hover, #wm-reanalyze-btn:hover {
     background:var(--olive); color:var(--accent); border-color:var(--accent-dim);
     text-shadow:0 0 6px var(--accent-glow);
   }
@@ -368,6 +368,110 @@
   .node-group { cursor:pointer; }
   .node-group:hover .node-rect { filter:brightness(1.3) drop-shadow(0 0 6px rgba(232,168,36,.3)); }
 
+  /* ── COD:MW Tactical Node Entrance Animation ─────────────── */
+
+  /* Phase 1: Vertical beam of light slices in */
+  @keyframes nodeMW_beamSlice {
+    0%   { transform:scaleX(0) scaleY(0); opacity:0; }
+    15%  { transform:scaleX(0.03) scaleY(2.8); opacity:1; }
+    35%  { transform:scaleX(0.03) scaleY(2.8); opacity:1; }
+    55%  { transform:scaleX(1.15) scaleY(1.05); opacity:1; }
+    75%  { transform:scaleX(1.0) scaleY(1.0); opacity:1; }
+    100% { transform:scaleX(1.0) scaleY(1.0); opacity:1; }
+  }
+
+  /* Phase 2: Intense flash that washes out then settles */
+  @keyframes nodeMW_flash {
+    0%   { filter:brightness(1) drop-shadow(0 0 0px rgba(109,189,74,0)); }
+    10%  { filter:brightness(4) drop-shadow(0 0 35px rgba(109,189,74,1)); }
+    25%  { filter:brightness(2.5) drop-shadow(0 0 25px rgba(232,168,36,.9)); }
+    50%  { filter:brightness(1.6) drop-shadow(0 0 14px rgba(109,189,74,.5)); }
+    100% { filter:brightness(1) drop-shadow(0 0 0px rgba(109,189,74,0)); }
+  }
+
+  /* Phase 3: Static / electricity distortion on the rect */
+  @keyframes nodeMW_static {
+    0%   { clip-path:inset(0 0 0 0); }
+    5%   { clip-path:inset(0 0 85% 0); }
+    10%  { clip-path:inset(40% 0 0 0); }
+    15%  { clip-path:inset(0 0 0 0); }
+    20%  { clip-path:inset(0 20% 60% 0); }
+    25%  { clip-path:inset(70% 0 0 10%); }
+    30%  { clip-path:inset(0 0 0 0); }
+    35%  { clip-path:inset(0 0 45% 0); }
+    40%  { clip-path:inset(0 0 0 0); }
+    50%  { clip-path:inset(0 0 0 0); }
+    100% { clip-path:inset(0 0 0 0); }
+  }
+
+  /* Phase 4: Horizontal scan-line sweep */
+  @keyframes nodeMW_scanline {
+    0%   { background-position:0 -100%; opacity:1; }
+    60%  { background-position:0 200%; opacity:1; }
+    100% { background-position:0 200%; opacity:0; }
+  }
+
+  /* Phase 5: Electric arc flicker around border */
+  @keyframes nodeMW_borderArc {
+    0%   { stroke-dashoffset:0; stroke-opacity:1; }
+    20%  { stroke-dashoffset:-30; stroke-opacity:0.3; }
+    40%  { stroke-dashoffset:-60; stroke-opacity:1; }
+    60%  { stroke-dashoffset:-100; stroke-opacity:0.5; }
+    80%  { stroke-dashoffset:-140; stroke-opacity:1; }
+    100% { stroke-dashoffset:-200; stroke-opacity:0; }
+  }
+
+  /* Phase 6: Particle burst ring */
+  @keyframes nodeMW_ring {
+    0%   { r:4; opacity:1; stroke-width:3; }
+    40%  { r:80; opacity:.7; stroke-width:1.5; }
+    100% { r:140; opacity:0; stroke-width:0.5; }
+  }
+
+  /* Horizontal glitch jitter */
+  @keyframes nodeMW_glitch {
+    0%   { transform:translate(0,0); }
+    10%  { transform:translate(-3px,1px); }
+    20%  { transform:translate(4px,-1px); }
+    30%  { transform:translate(-2px,0px); }
+    40%  { transform:translate(0,0); }
+    100% { transform:translate(0,0); }
+  }
+
+  .node-group.node-created {
+    animation:
+      nodeMW_beamSlice .7s cubic-bezier(.22,.68,.36,1) both,
+      nodeMW_glitch .5s ease-out .15s both;
+  }
+  .node-group.node-created .node-rect {
+    animation:
+      nodeMW_flash .9s ease-out .05s both,
+      nodeMW_static .6s steps(2,end) .1s both;
+  }
+  .node-group.node-created .mw-arc-border {
+    animation:nodeMW_borderArc .8s ease-out .1s both;
+  }
+  .node-group.node-created .mw-burst-ring {
+    animation:nodeMW_ring .7s ease-out .05s both;
+  }
+
+  /* The electricity overlay lines */
+  .mw-arc-border {
+    fill:none; stroke:#6dbd4a; stroke-width:2;
+    stroke-dasharray:8,6,2,6; stroke-opacity:0;
+    pointer-events:none;
+  }
+  .mw-burst-ring {
+    fill:none; stroke:#e8a824; stroke-width:2; opacity:0;
+    pointer-events:none;
+  }
+  .mw-beam-line {
+    pointer-events:none;
+  }
+  .mw-scanline-bar {
+    pointer-events:none;
+  }
+
   .node-rect { stroke-width:1.5; rx:2px; ry:2px; transition:opacity .2s, filter .2s; }
   .node-rect.class  { fill:#1a2610; stroke:#6dbd4a; }
   .node-rect.method { fill:#1a1408; stroke:#e8a824; }
@@ -643,6 +747,7 @@
     animation:loadPulse 2s ease-in-out infinite;
   }
   @keyframes loadPulse { 0%,100%{opacity:.6} 50%{opacity:1} }
+  @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
 
   /* Overview cursor */
   #graph-container svg { cursor:crosshair; }
@@ -877,6 +982,93 @@
   .chat-send-btn:hover { background:var(--accent-dim); color:var(--bg); }
   .chat-send-btn:disabled { opacity:.3; cursor:default; }
 
+  /* ── Chat mode toggle (Ask / Agent) ────────────────────── */
+  .chat-mode-toggle {
+    display:flex; gap:0; margin-right:4px;
+  }
+  .chat-mode-btn {
+    background:var(--surface-alt); border:1px solid var(--border);
+    color:var(--text-muted); font-family:'Rajdhani',sans-serif;
+    font-size:10px; font-weight:600; padding:2px 10px;
+    cursor:pointer; text-transform:uppercase; letter-spacing:.5px;
+    transition:all .15s; line-height:1.4;
+  }
+  .chat-mode-btn:first-child {
+    border-right:none;
+    clip-path:polygon(0 0,100% 0,100% 100%,4px 100%,0 calc(100% - 4px));
+  }
+  .chat-mode-btn:last-child {
+    border-left:none;
+    clip-path:polygon(0 0,calc(100% - 4px) 0,100% 4px,100% 100%,0 100%);
+  }
+  .chat-mode-btn.active {
+    background:var(--olive); color:var(--accent);
+    border-color:var(--accent-dim);
+  }
+  .chat-mode-btn.active.agent {
+    background:rgba(0,200,200,.12); color:var(--cyan);
+    border-color:var(--cyan);
+  }
+  .chat-mode-btn:hover:not(.active) {
+    background:var(--surface); color:var(--text);
+  }
+  .chat-mode-indicator {
+    font-size:9px; color:var(--text-muted); letter-spacing:.5px;
+    text-transform:uppercase; padding:0 4px;
+    display:flex; align-items:center; gap:3px;
+  }
+  .chat-mode-indicator .mode-dot {
+    width:5px; height:5px; border-radius:50%;
+    background:var(--accent); display:inline-block;
+  }
+  .chat-mode-indicator.agent .mode-dot {
+    background:var(--cyan);
+    box-shadow:0 0 4px var(--cyan);
+  }
+
+  /* ── File change indicators in chat ───────────────────── */
+  .chat-file-change {
+    font-size:10px; padding:4px 10px; margin:2px 0;
+    font-family:'Share Tech Mono',monospace;
+    display:flex; align-items:center; gap:6px;
+    border-left:2px solid var(--border);
+    background:rgba(255,255,255,.02);
+    transition:background .15s;
+  }
+  .chat-file-change[style*="cursor"]:hover {
+    background:rgba(255,255,255,.06);
+  }
+  .chat-file-change[style*="cursor"] .fc-path {
+    text-decoration:underline;
+    text-decoration-color:transparent;
+    transition:text-decoration-color .15s;
+  }
+  .chat-file-change[style*="cursor"]:hover .fc-path {
+    text-decoration-color:currentColor;
+  }
+  .chat-file-change.created {
+    border-left-color:var(--green);
+  }
+  .chat-file-change.created .fc-icon { color:var(--green); }
+  .chat-file-change.modified {
+    border-left-color:var(--cyan);
+  }
+  .chat-file-change.modified .fc-icon { color:var(--cyan); }
+  .chat-file-change.deleted {
+    border-left-color:var(--red);
+  }
+  .chat-file-change.deleted .fc-icon { color:var(--red); }
+  .chat-file-change .fc-icon {
+    font-weight:700; flex-shrink:0; font-size:11px;
+  }
+  .chat-file-change .fc-path {
+    color:var(--text); opacity:.8;
+  }
+  .chat-file-change .fc-label {
+    color:var(--text-muted); text-transform:uppercase;
+    font-size:9px; letter-spacing:.5px;
+  }
+
   /* ── Strip pane (auto-size, no dead space) ──────────────── */
   .wm-split-pane-strip {
     display:flex !important;
@@ -1075,6 +1267,31 @@
     padding:14px; text-align:center; color:var(--text-muted); font-size:11px;
     text-transform:uppercase; letter-spacing:1px;
   }
+  .browser-new-folder-row {
+    display:flex; align-items:center; gap:4px; padding:4px 8px;
+    border-top:1px solid var(--border); background:var(--surface);
+  }
+  .browser-new-folder-row input {
+    flex:1; min-width:0; background:var(--bg); border:1px solid var(--border);
+    color:var(--text); font-family:'Share Tech Mono',monospace;
+    font-size:11px; padding:3px 6px; outline:none;
+  }
+  .browser-new-folder-row input:focus { border-color:var(--accent-dim); }
+  .browser-new-folder-row input::placeholder { color:var(--text-muted); opacity:.5; }
+  .browser-nf-btn {
+    background:var(--surface-alt); border:1px solid var(--border); color:var(--text-muted);
+    cursor:pointer; font-family:'Rajdhani',sans-serif; font-size:10px;
+    font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+    padding:3px 8px; white-space:nowrap; transition:all .15s;
+  }
+  .browser-nf-btn:hover { background:var(--olive); color:var(--accent); border-color:var(--accent-dim); }
+  .browser-nf-btn:disabled { opacity:.3; cursor:default; }
+  .browser-nf-btn.confirm { color:var(--green); }
+  .browser-nf-btn.confirm:hover { border-color:var(--green); }
+  .browser-nf-error {
+    padding:2px 8px; font-size:10px; color:var(--red);
+    font-family:'Share Tech Mono',monospace;
+  }
 
   /* ── Shortcuts panel ─────────────────────────────────────── */
   #shortcuts-panel {
@@ -1191,6 +1408,7 @@
     <div id="wm-view-menu"></div>
   </div>
   <button id="wm-reset-btn" title="Reset layout to default">⟲ Reset</button>
+  <button id="wm-reanalyze-btn" title="Re-analyze codebase (clear caches)">↻ Re-analyze</button>
   <div class="wm-toolbar-group">
     <button id="wm-config-btn" title="Switch layout configuration">◈ Default ▾</button>
     <div id="wm-config-menu"></div>
@@ -1230,6 +1448,8 @@
   <div class="status-item">View <span class="status-value" id="sb-view">—</span></div>
   <div class="status-sep"></div>
   <div class="status-item">Depth <span class="status-value" id="sb-depth">0</span></div>
+  <div class="status-sep"></div>
+  <div class="status-item" id="sb-ai-status" style="display:none"><div class="status-dot" style="background:#5ab8a8;animation:pulse 1.5s infinite"></div> <span class="status-value" id="sb-ai-text">AI</span></div>
   <div class="status-shortcut">
     <kbd>/</kbd> Search &nbsp; <kbd>G</kbd> Go-to &nbsp; <kbd>Tab</kbd> Neighbor &nbsp; <kbd>Enter</kbd> Drill &nbsp; <kbd>⌫</kbd> Back &nbsp; <kbd>Esc</kbd> Deselect
   </div>
@@ -1246,6 +1466,7 @@
   <div class="ctx-item" id="ctx-view-code"><span class="ctx-icon">📝</span>View Code</div>
   <div class="ctx-item" id="ctx-reveal-file"><span class="ctx-icon">📁</span>Reveal in Files</div>
   <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-walkthrough"><span class="ctx-icon">🎬</span>Walkthrough</div>
   <div class="ctx-item" id="ctx-summary"><span class="ctx-icon">🤖</span>Summary</div>
   <div class="ctx-item" id="ctx-query"><span class="ctx-icon">💬</span>Query</div>
 </div>
@@ -1322,7 +1543,6 @@ PanelRegistry.register({
     content.innerHTML = '<div id="node-desc-bar" class="empty"><span class="desc-placeholder">Hover over a node to see its description</span></div>';
     // Scale font size relative to the panel dimensions
     _nodeDescResizeObserver(content);
-    if (graphData) setTimeout(_showGraphOverviewDesc, 0);
   },
 });
 
@@ -1483,6 +1703,12 @@ function revealInFileTree(filePath) {
 function loadDirectoryTree(containerEl) {
   var container = containerEl || document.getElementById('dir-tree');
   if (!container) return;
+
+  // Don't attempt to fetch if no project is active yet
+  if (!_currentProjectId && _projectsList.length === 0 && !_dirTreeCache) {
+    container.innerHTML = '<div style="padding:12px;color:var(--text-muted);text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:1px">No project selected</div>';
+    return;
+  }
 
   // If already cached, render immediately
   if (_dirTreeCache) {
@@ -1827,9 +2053,10 @@ PanelRegistry.register({
 // ================================================================
 
 var _chatMessages = [];        // {role, content} history sent to API
-var _chatModel = 'gpt-4o-mini';
+var _chatModel = 'gpt-5.4-mini';
 var _chatStreaming = false;
 var _chatModels = [];
+var _chatMode = 'ask';          // 'ask' or 'agent'
 
 function _chatEscHtml(s) {
   var d = document.createElement('div');
@@ -1910,6 +2137,162 @@ function _chatRenderToolCall(name, args, messagesEl) {
   return div;
 }
 
+function _chatRenderFileChange(changeType, path, messagesEl) {
+  var div = document.createElement('div');
+  div.className = 'chat-file-change ' + changeType;
+  var icons = {created: '+', modified: '~', deleted: '−'};
+  var labels = {created: 'Created', modified: 'Modified', deleted: 'Deleted'};
+  div.innerHTML =
+    '<span class="fc-icon">' + (icons[changeType] || '•') + '</span>' +
+    '<span class="fc-path">' + _chatEscHtml(path) + '</span>' +
+    '<span class="fc-label">' + (labels[changeType] || changeType) + '</span>';
+
+  // Make clickable — open the file in code editor (unless deleted)
+  if (changeType !== 'deleted') {
+    div.style.cursor = 'pointer';
+    div.title = 'Click to open ' + path;
+    div.addEventListener('click', function () {
+      openSourceFile(path);
+    });
+  }
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Trigger real-time update of the app
+  _handleFileChange(changeType, path);
+
+  return div;
+}
+
+/**
+ * React to a file change made by the AI agent:
+ * - Trigger a lightweight graph re-analysis so new/edited/deleted code
+ *   flows through the node-forming process
+ * - Re-fetch graph data and re-render Overview & Detail views
+ * - Clear position cache so the layout algorithm runs fresh
+ * - Refresh the file tree
+ * - Reload code editor if the open file was changed
+ *
+ * Changes are debounced — the agent may modify many files in quick
+ * succession and we only want to re-analyze once at the end.
+ */
+var _fileChangeRefreshTimer = null;
+var _fileChangePending = [];       // accumulate {changeType, path} during debounce
+var _fileChangeRefreshing = false; // prevent overlapping refreshes
+
+function _handleFileChange(changeType, path) {
+  _fileChangePending.push({ changeType: changeType, path: path });
+
+  // Silently update the code editor content if the currently-open file was changed
+  // (don't pop the panel open or switch tabs — just refresh the content in place)
+  if (_codeEditorCurrentPath === path) {
+    if (changeType === 'deleted') {
+      _codeEditorCurrentPath = null;
+      var editor = document.getElementById('code-editor');
+      if (editor) editor.innerHTML = '<div class="code-editor-placeholder">File was deleted by the agent</div>';
+    } else {
+      // Quietly re-fetch content without opening/focusing the panel
+      _silentRefreshCodeEditor(path);
+    }
+  }
+
+  // Debounce the heavy refresh (graph re-analysis + re-render)
+  if (_fileChangeRefreshTimer) clearTimeout(_fileChangeRefreshTimer);
+  _fileChangeRefreshTimer = setTimeout(function () {
+    _fileChangeRefreshTimer = null;
+    _flushFileChangeRefresh();
+  }, 600);
+}
+
+/**
+ * Silently refresh the code editor content for a file that's already open,
+ * without popping the panel open or switching tabs.
+ */
+function _silentRefreshCodeEditor(path) {
+  var container = document.getElementById('code-editor');
+  if (!container) return;
+  var apiBase = window.location.origin;
+  fetch(apiBase + '/api/source?path=' + encodeURIComponent(path))
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function(data) {
+      var c = document.getElementById('code-editor');
+      if (c && _codeEditorCurrentPath === path) {
+        _renderCodeContent(c, data.path, data.content, _codeEditorLineStart, _codeEditorLineEnd);
+      }
+    })
+    .catch(function() { /* silent — don't disrupt the chat flow */ });
+}
+
+async function _flushFileChangeRefresh() {
+  if (_fileChangeRefreshing) return;
+  _fileChangeRefreshing = true;
+
+  var pending = _fileChangePending.slice();
+  _fileChangePending = [];
+
+  try {
+    // 1. Refresh the file tree
+    _dirTreeCache = null;
+    _dirTreeLoading = false;
+    loadDirectoryTree();
+
+    // 2. Tell the server to clear graph caches and re-analyze
+    var refreshResp = await fetch(API_BASE + '/api/graph/refresh', { method: 'POST' });
+    if (!refreshResp.ok) {
+      console.warn('Graph refresh failed:', refreshResp.status);
+      _fileChangeRefreshing = false;
+      return;
+    }
+
+    // 3. Re-fetch graph data (both abstract and full)
+    var [overviewResp, fullResp] = await Promise.all([
+      fetch(API_BASE + '/api/graph?abstract=' + (ABSTRACT_NODES ? 'true' : 'false')),
+      fetch(API_BASE + '/api/graph?abstract=false')
+    ]);
+    if (!overviewResp.ok || !fullResp.ok) {
+      console.warn('Graph fetch failed after refresh');
+      _fileChangeRefreshing = false;
+      return;
+    }
+
+    rootGraphData = await overviewResp.json();
+    fullGraphData = await fullResp.json();
+
+    // 4. Update intermediate graph data
+    intermediateGraphData = {
+      nodes: rootGraphData.intermediate_nodes || [],
+      edges: rootGraphData.intermediate_edges || [],
+    };
+
+    // 5. Clear position cache — node IDs may have changed, so the layout
+    //    algorithm needs to run fresh for accurate positioning
+    _positionCache.clear();
+
+    // 6. Rebuild the search index with new nodes
+    buildSearchIndex();
+
+    // 7. Reset to Overview and re-render the graph
+    //    (drill-down state is invalidated because node IDs changed)
+    graphStack = [];
+    _setGraphView(rootGraphData, "Overview");
+    updateLegend(rootGraphData);
+
+  } catch (err) {
+    console.warn('File change refresh error:', err);
+  }
+
+  _fileChangeRefreshing = false;
+
+  // If more changes came in while we were refreshing, flush again
+  if (_fileChangePending.length > 0) {
+    _flushFileChangeRefresh();
+  }
+}
+
 function _chatHandleToolAction(result) {
   // Process tool results that contain UI actions (navigate, open file)
   try {
@@ -1975,6 +2358,7 @@ async function _chatSendMessage() {
       body: JSON.stringify({
         messages: _chatMessages,
         model: _chatModel,
+        mode: _chatMode,
       }),
     });
 
@@ -2030,6 +2414,9 @@ async function _chatSendMessage() {
             assistantContent = '';
           }
 
+        } else if (evt.type === 'file_change') {
+          _chatRenderFileChange(evt.change_type, evt.path, messagesEl);
+
         } else if (evt.type === 'error') {
           if (typingDiv.parentNode) typingDiv.remove();
           _chatRenderMessage({role: 'error', content: evt.content}, messagesEl);
@@ -2071,7 +2458,7 @@ function _chatLoadModels(selectEl) {
       }
     })
     .catch(function() {
-      selectEl.innerHTML = '<option value="gpt-4o-mini">GPT-4o Mini</option>';
+      selectEl.innerHTML = '<option value="gpt-5.4-mini">GPT-5.4 Mini</option>';
     });
 }
 
@@ -2082,9 +2469,47 @@ function _chatRenderPanel(container) {
   var toolbar = document.createElement('div');
   toolbar.className = 'chat-toolbar';
 
+  // Mode toggle (Ask / Agent)
+  var modeToggle = document.createElement('div');
+  modeToggle.className = 'chat-mode-toggle';
+
+  var askBtn = document.createElement('button');
+  askBtn.className = 'chat-mode-btn active';
+  askBtn.textContent = '💬 Ask';
+  askBtn.title = 'Ask questions about the codebase (read-only)';
+
+  var agentBtn = document.createElement('button');
+  agentBtn.className = 'chat-mode-btn agent';
+  agentBtn.textContent = '⚡ Agent';
+  agentBtn.title = 'Agent can read, create, edit, and delete files';
+
+  function _setChatMode(mode) {
+    _chatMode = mode;
+    if (mode === 'ask') {
+      askBtn.classList.add('active');
+      agentBtn.classList.remove('active');
+    } else {
+      askBtn.classList.remove('active');
+      agentBtn.classList.add('active');
+    }
+    // Update placeholder text
+    var input = container.querySelector('.chat-input');
+    if (input) {
+      input.placeholder = mode === 'agent'
+        ? 'Describe the changes you want to make…'
+        : 'Ask about the codebase…';
+    }
+  }
+
+  askBtn.addEventListener('click', function() { _setChatMode('ask'); });
+  agentBtn.addEventListener('click', function() { _setChatMode('agent'); });
+
+  modeToggle.appendChild(askBtn);
+  modeToggle.appendChild(agentBtn);
+
   var modelSelect = document.createElement('select');
   modelSelect.className = 'chat-model-select';
-  modelSelect.innerHTML = '<option value="gpt-4o-mini">GPT-4o Mini</option>';
+  modelSelect.innerHTML = '<option value="gpt-5.4-mini">GPT-5.4 Mini</option>';
   modelSelect.addEventListener('change', function() { _chatModel = modelSelect.value; });
   _chatLoadModels(modelSelect);
 
@@ -2098,6 +2523,7 @@ function _chatRenderPanel(container) {
     _chatRenderMessage({role: 'system', content: 'Chat cleared'}, messagesEl);
   });
 
+  toolbar.appendChild(modeToggle);
   toolbar.appendChild(modelSelect);
   toolbar.appendChild(clearBtn);
 
@@ -2108,7 +2534,7 @@ function _chatRenderPanel(container) {
   // Welcome message
   _chatRenderMessage({
     role: 'system',
-    content: '◆ Vibe Coding Assistant — Ask about the codebase, architecture, or request changes'
+    content: '◆ Vibe Coding Assistant — Ask about the codebase, architecture, or switch to Agent mode to make changes'
   }, messagesEl);
 
   // Input area
@@ -2317,7 +2743,7 @@ function _previewUpdateSkipButtons() {
 
 /* ── Main controls ──────────────────────────────────────────────── */
 
-async function _previewStart() {
+async function _previewStart(focusNodeId) {
   if (_previewPlaying) return;
 
   var level = document.getElementById('preview-level');
@@ -2330,12 +2756,84 @@ async function _previewStart() {
   if (playBtn) playBtn.disabled = true;
 
   try {
+    // Ensure hierarchical descriptions are available — walkthrough depends on them
+    if (!_hierDescLoaded) {
+      if (!_hierDescLoading) {
+        _previewShowNarration('Generating descriptions…', true);
+        // Kick off generation
+        try {
+          await fetch(API_BASE + '/api/describe', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ force: false }),
+          });
+        } catch(e) { /* will poll below */ }
+      }
+      // Poll until descriptions are ready (or timeout after 180s)
+      _previewShowNarration('Waiting for descriptions…', true);
+      var waited = 0;
+      while (!_hierDescLoaded && waited < 180000) {
+        await new Promise(function(r) { setTimeout(r, 2000); });
+        waited += 2000;
+        try {
+          var statusResp = await fetch(API_BASE + '/api/describe/status');
+          var status = await statusResp.json();
+          if (status.total > 0) {
+            _previewShowNarration('Generating descriptions… ' + status.done + '/' + status.total, true);
+          }
+          // Only break when explicitly done — 'idle' means the task hasn't started yet
+          if (status.status === 'done') {
+            // Fetch the results
+            var descResp = await fetch(API_BASE + '/api/describe');
+            var descData = await descResp.json();
+            if (descData.descriptions && Object.keys(descData.descriptions).length > 0) {
+              _hierDescriptions = descData.descriptions;
+              _hierDescLoaded = true;
+              _hierDescLoading = false;
+              _prefillNodeDescCache();
+            }
+            break;
+          }
+          if (status.status === 'error') {
+            throw new Error(status.error || 'Description generation failed');
+          }
+          // If status is 'idle' and not running, the task may not have started yet —
+          // re-trigger it and keep polling
+          if (status.status === 'idle' && !status.running && waited > 4000) {
+            try {
+              await fetch(API_BASE + '/api/describe', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ force: false }),
+              });
+            } catch(e2) { /* keep polling */ }
+          }
+        } catch(e) {
+          if (e.message && e.message.indexOf('Description generation failed') !== -1) {
+            throw e;
+          }
+          /* network error — retry */
+        }
+      }
+      if (!_hierDescLoaded) {
+        throw new Error('Timed out waiting for descriptions to generate');
+      }
+      _previewShowNarration('Generating walkthrough…', true);
+    }
+
+    var previewBody = { level: levelVal };
+    if (focusNodeId) previewBody.focus_node_id = focusNodeId;
+
     var resp = await fetch(API_BASE + '/api/preview', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ level: levelVal }),
+      body: JSON.stringify(previewBody),
     });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    if (!resp.ok) {
+      var errData = {};
+      try { errData = await resp.json(); } catch(e) {}
+      throw new Error(errData.error || 'HTTP ' + resp.status);
+    }
     var data = await resp.json();
     if (data.error) throw new Error(data.error);
 
@@ -2450,8 +2948,8 @@ function _previewStop() {
   _previewUpdateCounter();
   _previewUpdateSkipButtons();
 
-  // Restore the Node Description bar to its normal overview state
-  if (typeof _showGraphOverviewDesc === 'function') _showGraphOverviewDesc();
+  // Restore the Node Description bar to its normal empty state
+  if (typeof _clearNodeDesc === 'function') _clearNodeDesc();
 }
 
 function _previewFinish() {
@@ -2775,12 +3273,12 @@ function _previewTypewriter(el, text) {
 // Override resume on Play button when paused
 (function() {
   var _origStart = _previewStart;
-  _previewStart = async function() {
+  _previewStart = async function(focusNodeId) {
     if (_previewScenes.length > 0 && _previewIndex < _previewScenes.length && !_previewPlaying) {
       _previewResume();
       return;
     }
-    return _origStart();
+    return _origStart(focusNodeId);
   };
 })();
 
@@ -2828,6 +3326,7 @@ async function _enrichNodeClassifications() {
   }
 
   _llmEnrichPending = true;
+  _updateAIStatus('Classifying nodes…');
 
   for (var b = 0; b < batches.length; b++) {
     var batch = batches[b];
@@ -2865,6 +3364,7 @@ async function _enrichNodeClassifications() {
 
   _llmEnrichPending = false;
   _llmEnrichDone = true;
+  _updateAIStatus(null);
 
   // Re-render the graph to apply new classifications
   if (graphData && typeof renderGraph === 'function') {
@@ -2965,7 +3465,7 @@ async function _chatSendProgrammatic(text) {
     var resp = await fetch(apiBase + '/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ messages: _chatMessages, model: _chatModel }),
+      body: JSON.stringify({ messages: _chatMessages, model: _chatModel, mode: _chatMode }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
@@ -3005,6 +3505,8 @@ async function _chatSendProgrammatic(text) {
             assistantDiv = null;
             assistantContent = '';
           }
+        } else if (evt.type === 'file_change') {
+          _chatRenderFileChange(evt.change_type, evt.path, messagesEl);
         } else if (evt.type === 'error') {
           if (typingDiv.parentNode) typingDiv.remove();
           _chatRenderMessage({role: 'error', content: evt.content}, messagesEl);
@@ -3703,6 +4205,7 @@ let graphStack = [];
 let currentGraphLabel = "Overview";
 let simulation = null;
 let selectedNode = null;
+var _prevRenderedNodeIds = new Set();  // tracks node IDs from previous render for new-node animation
 
 const activeNodeKinds = new Set(["class", "method", "island_chain", "group"]);
 const activeEdgeKinds = new Set(["inherits", "imports", "contains", "instantiates", "uses_type", "calls"]);
@@ -4065,8 +4568,20 @@ async function loadGraph() {
       fetch(`${API_BASE}/api/graph?abstract=${ABSTRACT_NODES ? "true" : "false"}`),
       fetch(`${API_BASE}/api/graph?abstract=false`)
     ]);
-    if (!overviewResp.ok) throw new Error(`HTTP ${overviewResp.status}`);
-    if (!fullResp.ok) throw new Error(`HTTP ${fullResp.status}`);
+    if (!overviewResp.ok) {
+      if (overviewResp.status === 404) {
+        var errData = await overviewResp.json().catch(function() { return {}; });
+        throw new Error(errData.error || 'No project selected — use the Project dropdown to create one.');
+      }
+      throw new Error(`HTTP ${overviewResp.status}`);
+    }
+    if (!fullResp.ok) {
+      if (fullResp.status === 404) {
+        var errData2 = await fullResp.json().catch(function() { return {}; });
+        throw new Error(errData2.error || 'No project selected.');
+      }
+      throw new Error(`HTTP ${fullResp.status}`);
+    }
 
     rootGraphData = await overviewResp.json();
     fullGraphData = await fullResp.json();
@@ -4086,6 +4601,13 @@ async function loadGraph() {
     _llmEnrichDone = false;
     _llmContentClassifications = {};
     _enrichNodeClassifications();
+
+    // Fire hierarchical description generation in the background (non-blocking)
+    _hierDescriptions = {};
+    _hierDescLoaded = false;
+    _hierDescLoading = false;
+    if (_hierDescPollTimer) { clearTimeout(_hierDescPollTimer); _hierDescPollTimer = null; }
+    _loadHierarchicalDescriptions();
   } catch (err) {
     document.querySelectorAll('[data-loading]').forEach(function(el) { el.textContent = 'Error: ' + err.message; });
   }
@@ -4205,6 +4727,20 @@ function updateStatusBar() {
   sbDepth.textContent = String(graphStack.length);
 }
 
+/** Show or hide the AI status indicator in the status bar.
+ *  Pass null or empty string to hide. */
+function _updateAIStatus(text) {
+  var el = document.getElementById('sb-ai-status');
+  var txt = document.getElementById('sb-ai-text');
+  if (!el) return;
+  if (text) {
+    el.style.display = '';
+    if (txt) txt.textContent = text;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 function updateBreadcrumb() {
   const el = document.getElementById("graph-breadcrumb");
   if (!el) return;
@@ -4251,7 +4787,7 @@ function _setGraphView(nextGraph, label) {
   var dp = document.getElementById("detail-panel");
   if (dp) dp.classList.remove("open");
   renderGraph();
-  _showGraphOverviewDesc();
+  _clearNodeDesc();
 }
 
 function buildClassMethodGraph(classNode) {
@@ -5182,7 +5718,153 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   d3.select(window).on("mouseup.detailnav", function() { _detailIsDragging = false; });
 }
 
+/**
+ * Tag newly created nodes with an entrance animation.
+ * Compares current nodeData IDs against _prevRenderedNodeIds (from the
+ * previous render) and adds the 'node-created' CSS class to new entries.
+ * Updates _prevRenderedNodeIds for the next render cycle.
+ */
+function _tagNewNodes(nodeSelection, nodeData, oldNodeIds) {
+  // Build the current set of node IDs
+  var currentIds = new Set(nodeData.map(function(n) { return n.id; }));
+  // Update the global tracking set for next time
+  _prevRenderedNodeIds = currentIds;
+
+  // Only animate if there was a previous render to compare against
+  // (skip on first load — everything is new, animation would be noisy)
+  if (oldNodeIds.size === 0) return;
+
+  // Find new IDs
+  var newIds = new Set();
+  currentIds.forEach(function(id) {
+    if (!oldNodeIds.has(id)) newIds.add(id);
+  });
+  if (newIds.size === 0) return;
+
+  // Stagger delay so nodes appear sequentially like a tactical data-link
+  var staggerIdx = 0;
+  var STAGGER_MS = 90;
+
+  // Apply COD:MW animation class + inject SVG overlay effects
+  nodeSelection.each(function(d) {
+    if (!newIds.has(d.id)) return;
+
+    var el = d3.select(this);
+    var self = this;
+    var delay = staggerIdx * STAGGER_MS;
+    staggerIdx++;
+
+    var nw = (NODE_SIZE[d.kind] && NODE_SIZE[d.kind].w) || 160;
+    var nh = (NODE_SIZE[d.kind] && NODE_SIZE[d.kind].h) || 60;
+
+    // Apply CSS animation class after stagger delay
+    setTimeout(function() {
+      el.classed('node-created', true);
+
+      // ── Electric arc border overlay ──
+      var arcRect = el.insert('rect', ':first-child')
+        .attr('class', 'mw-arc-border')
+        .attr('x', -nw / 2 - 3)
+        .attr('y', -nh / 2 - 3)
+        .attr('width', nw + 6)
+        .attr('height', nh + 6)
+        .attr('rx', 3).attr('ry', 3);
+
+      // ── Expanding ring burst ──
+      var ring = el.insert('circle', ':first-child')
+        .attr('class', 'mw-burst-ring')
+        .attr('cx', 0).attr('cy', 0).attr('r', 4);
+
+      // ── Second ring with offset for depth ──
+      var ring2 = el.insert('circle', ':first-child')
+        .attr('class', 'mw-burst-ring')
+        .attr('cx', 0).attr('cy', 0).attr('r', 4)
+        .style('animation-delay', (0.12) + 's')
+        .style('stroke', '#6dbd4a');
+
+      // ── Vertical beam of light (bright line that precedes the node) ──
+      var beam = el.insert('line', ':first-child')
+        .attr('class', 'mw-beam-line')
+        .attr('x1', 0).attr('y1', -nh * 1.8)
+        .attr('x2', 0).attr('y2', nh * 1.8)
+        .attr('stroke', '#e8a824')
+        .attr('stroke-width', 3)
+        .attr('stroke-opacity', 0);
+
+      // Animate beam: flash on, thin out, disappear
+      beam.transition().duration(80)
+        .attr('stroke-opacity', 1)
+        .attr('stroke-width', 6)
+        .transition().duration(200)
+        .attr('stroke-opacity', 0.8)
+        .attr('stroke-width', 1)
+        .transition().duration(300)
+        .attr('stroke-opacity', 0)
+        .remove();
+
+      // ── Horizontal scan-line bar (sweeps down the node) ──
+      var scanFO = el.insert('foreignObject', ':first-child')
+        .attr('class', 'mw-scanline-bar')
+        .attr('x', -nw / 2)
+        .attr('y', -nh / 2)
+        .attr('width', nw)
+        .attr('height', nh)
+        .html('<div xmlns="http://www.w3.org/1999/xhtml" style="' +
+          'width:100%;height:100%;overflow:hidden;pointer-events:none;' +
+          'background:repeating-linear-gradient(0deg,' +
+          'transparent 0px,transparent 2px,' +
+          'rgba(109,189,74,0.12) 2px,rgba(109,189,74,0.12) 4px);' +
+          'animation:nodeMW_scanline .7s ease-out both;' +
+          '"></div>');
+
+      // ── Electricity / static sparks (random small lines) ──
+      var sparkCount = 6 + Math.floor(Math.random() * 5);
+      for (var si = 0; si < sparkCount; si++) {
+        (function(i) {
+          var sx = (Math.random() - 0.5) * nw;
+          var sy = (Math.random() - 0.5) * nh;
+          var ex = sx + (Math.random() - 0.5) * 30;
+          var ey = sy + (Math.random() - 0.5) * 20;
+          var mx = (sx + ex) / 2 + (Math.random() - 0.5) * 18;
+          var my = (sy + ey) / 2 + (Math.random() - 0.5) * 14;
+          var sparkDelay = Math.random() * 350;
+          var sparkDur = 120 + Math.random() * 200;
+          var sparkColor = Math.random() > 0.5 ? '#6dbd4a' : '#e8a824';
+
+          var spark = el.append('polyline')
+            .attr('points', sx + ',' + sy + ' ' + mx + ',' + my + ' ' + ex + ',' + ey)
+            .attr('fill', 'none')
+            .attr('stroke', sparkColor)
+            .attr('stroke-width', 1 + Math.random())
+            .attr('stroke-opacity', 0)
+            .style('pointer-events', 'none')
+            .style('filter', 'drop-shadow(0 0 3px ' + sparkColor + ')');
+
+          setTimeout(function() {
+            spark.transition().duration(40)
+              .attr('stroke-opacity', 0.9)
+              .transition().duration(sparkDur)
+              .attr('stroke-opacity', 0)
+              .remove();
+          }, sparkDelay);
+        })(si);
+      }
+
+      // ── Cleanup: remove overlay elements after animations complete ──
+      var cleanupDelay = 1200;
+      setTimeout(function() {
+        el.classed('node-created', false);
+        el.selectAll('.mw-arc-border, .mw-burst-ring, .mw-beam-line, .mw-scanline-bar').remove();
+      }, cleanupDelay);
+
+    }, delay);
+  });
+}
+
 function renderGraph() {
+  // Snapshot previous node IDs for new-node entrance animation
+  var _oldNodeIds = new Set(_prevRenderedNodeIds);
+
   // Full cleanup of previous detail view
   cleanupDetailView();
   updateStatusBar();
@@ -5263,6 +5945,15 @@ function renderGraph() {
   defs.append("marker").attr("id","arrow-instantiates").attr("viewBox","-1 -7 18 14").attr("refX",17).attr("refY",0).attr("markerWidth",14).attr("markerHeight",14).attr("markerUnits","userSpaceOnUse").attr("orient","auto").append("path").attr("d","M0,0L8,-6L16,0L8,6Z").attr("fill","none").attr("stroke","#b8a878").attr("stroke-width",2.5);
   defs.append("marker").attr("id","arrow-uses_type").attr("viewBox","0 -6 12 12").attr("refX",12).attr("refY",0).attr("markerWidth",12).attr("markerHeight",12).attr("markerUnits","userSpaceOnUse").attr("orient","auto").append("path").attr("d","M0,-6L12,0L0,6").attr("fill","none").attr("stroke","#6dbd4a").attr("stroke-width",2.5);
   defs.append("marker").attr("id","diamond-contains-end").attr("viewBox","-1 -7 18 14").attr("refX",0).attr("refY",0).attr("markerWidth",14).attr("markerHeight",14).attr("markerUnits","userSpaceOnUse").attr("orient","auto-start-reverse").append("path").attr("d","M0,0L8,-6L16,0L8,6Z").attr("fill","#3d4a2e").attr("stroke","#3d4a2e");
+
+  // ── COD:MW glow filters for node entrance FX ──
+  var mwGlow = defs.append("filter").attr("id","mw-glow").attr("x","-50%").attr("y","-50%").attr("width","200%").attr("height","200%");
+  mwGlow.append("feGaussianBlur").attr("in","SourceGraphic").attr("stdDeviation","6").attr("result","blur");
+  mwGlow.append("feMerge").html('<feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
+
+  var mwBeamGlow = defs.append("filter").attr("id","mw-beam-glow").attr("x","-100%").attr("y","-100%").attr("width","300%").attr("height","300%");
+  mwBeamGlow.append("feGaussianBlur").attr("in","SourceGraphic").attr("stdDeviation","10").attr("result","blur");
+  mwBeamGlow.append("feMerge").html('<feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
 
   const g = svg.append("g");
   const zoomBehavior = d3.zoom()
@@ -5437,7 +6128,9 @@ function renderGraph() {
     node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
     link.attr("d", edgePath);
     edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
-    // Use current container dimensions, not the captured width/height
+
+    // Tag newly created nodes with entrance animation
+    _tagNewNodes(node, nodeData, _oldNodeIds);
     const ctr = document.getElementById("graph-container");
     if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
     var eid1 = setTimeout(function() {
@@ -5490,6 +6183,8 @@ function renderGraph() {
       node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
       link.attr("d", edgePath);
     edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
+      // Tag newly created nodes with entrance animation
+      _tagNewNodes(node, nodeData, _oldNodeIds);
       const ctr = document.getElementById("graph-container");
       if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
       var eidGrid = setTimeout(function() {
@@ -5577,6 +6272,8 @@ function renderGraph() {
       }
 
       snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoomBehavior);
+      // Tag newly created nodes with entrance animation
+      _tagNewNodes(node, nodeData, _oldNodeIds);
       // Final safety check after grid snap animation
       var eid2 = setTimeout(function() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
@@ -5689,6 +6386,7 @@ function hideNodeContextMenu() {
   var revealBtn = document.getElementById("ctx-reveal-file");
   var summaryBtn = document.getElementById("ctx-summary");
   var queryBtn = document.getElementById("ctx-query");
+  var walkthroughBtn = document.getElementById("ctx-walkthrough");
 
   digBtn.addEventListener("click", function(e) {
     e.stopPropagation();
@@ -5720,6 +6418,22 @@ function hideNodeContextMenu() {
     e.stopPropagation();
     if (_ctxMenuNode && _ctxMenuNode.file_path) {
       revealInFileTree(_ctxMenuNode.file_path);
+    }
+    hideNodeContextMenu();
+  });
+
+  walkthroughBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode) {
+      // Open the preview panel if not visible
+      if (typeof WM !== 'undefined' && WM.openPanel) {
+        WM.openPanel('preview');
+      }
+      // Reset any existing walkthrough and start focused on this node
+      _previewScenes = [];
+      _previewIndex = 0;
+      _previewPlaying = false;
+      setTimeout(function() { _previewStart(_ctxMenuNode.id); }, 200);
     }
     hideNodeContextMenu();
   });
@@ -5850,6 +6564,138 @@ const _nodeDescCache = new Map();
 let _nodeDescAbort = null;   // current AbortController
 let _nodeDescHoverId = null; // node ID currently being described
 
+// ── Hierarchical descriptions (bottom-up LLM-generated) ────────────
+var _hierDescriptions = {};        // node_id → {name, kind, description, level, ...}
+var _hierDescLoading = false;
+var _hierDescLoaded = false;
+var _hierDescPollTimer = null;
+
+/**
+ * Load hierarchical descriptions from disk cache (GET) or
+ * trigger generation (POST) in the background.
+ * Non-blocking — descriptions are used opportunistically when available.
+ */
+function _loadHierarchicalDescriptions() {
+  if (_hierDescLoading) return;
+
+  // First try to load from cache (fast GET)
+  fetch(API_BASE + '/api/describe')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.descriptions && Object.keys(data.descriptions).length > 0) {
+        _hierDescriptions = data.descriptions;
+        _hierDescLoaded = true;
+        _prefillNodeDescCache();
+      }
+      // If already generating in background, just start polling
+      if (data.generating) {
+        _hierDescLoading = true;
+        _pollDescriptionStatus();
+        return;
+      }
+      // Kick off generation (POST returns immediately now)
+      _generateHierarchicalDescriptions(false);
+    })
+    .catch(function() {
+      _generateHierarchicalDescriptions(false);
+    });
+}
+
+function _generateHierarchicalDescriptions(force) {
+  if (_hierDescLoading) return;
+  _hierDescLoading = true;
+
+  fetch(API_BASE + '/api/describe', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ force: !!force }),
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'started' || data.status === 'already_running') {
+        // Poll for completion
+        _pollDescriptionStatus();
+      } else {
+        _hierDescLoading = false;
+      }
+    })
+    .catch(function() {
+      _hierDescLoading = false;
+    });
+}
+
+function _pollDescriptionStatus() {
+  if (_hierDescPollTimer) clearTimeout(_hierDescPollTimer);
+  _updateAIStatus('Generating descriptions…');
+
+  _hierDescPollTimer = setTimeout(function _poll() {
+    fetch(API_BASE + '/api/describe/status')
+      .then(function(r) { return r.json(); })
+      .then(function(status) {
+        if (status.status === 'done') {
+          // Generation finished — fetch the results
+          _hierDescLoading = false;
+          _hierDescPollTimer = null;
+          _updateAIStatus(null);
+          fetch(API_BASE + '/api/describe')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (data.descriptions && Object.keys(data.descriptions).length > 0) {
+                _hierDescriptions = data.descriptions;
+                _hierDescLoaded = true;
+                _prefillNodeDescCache();
+              }
+            })
+            .catch(function() {});
+        } else if (status.status === 'error') {
+          console.error('Description generation failed:', status.error);
+          _hierDescLoading = false;
+          _hierDescPollTimer = null;
+          _updateAIStatus(null);
+        } else {
+          // Still running — update status and fetch incremental results
+          if (status.total > 0) {
+            _updateAIStatus('Describing ' + status.done + '/' + status.total);
+          }
+          fetch(API_BASE + '/api/describe')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (data.descriptions && Object.keys(data.descriptions).length > 0) {
+                var newCount = Object.keys(data.descriptions).length;
+                var oldCount = Object.keys(_hierDescriptions).length;
+                if (newCount > oldCount) {
+                  _hierDescriptions = data.descriptions;
+                  _hierDescLoaded = true;
+                  _prefillNodeDescCache();
+                }
+              }
+            })
+            .catch(function() {});
+          // Poll again
+          _hierDescPollTimer = setTimeout(_poll, 2000);
+        }
+      })
+      .catch(function() {
+        // Network error — retry after longer delay
+        _hierDescPollTimer = setTimeout(_poll, 5000);
+      });
+  }, 1500);
+}
+
+/** Pre-fill the node description cache with hierarchical descriptions. */
+function _prefillNodeDescCache() {
+  Object.keys(_hierDescriptions).forEach(function(nid) {
+    var entry = _hierDescriptions[nid];
+    if (!entry || !entry.description || nid === '__root__') return;
+    // Always overwrite with hierarchical descriptions — they are richer
+    _nodeDescCache.set(nid, {
+      description: entry.description,
+      contentHash: entry.hash || 'hier',
+      fromHier: true,
+    });
+  });
+}
+
 function _contentHashForNode(d) {
   // Simple hash from node identity + code location + membership
   var raw = (d.file_path || '') + ':' + (d.line_start || 0) + ':' + (d.line_end || 0) + ':' + d.name;
@@ -5873,18 +6719,27 @@ function _showNodeDesc(d) {
   var bar = document.getElementById('node-desc-bar');
   if (!bar) return;
   _nodeDescHoverId = d.id;
+
+  // 1. Check hierarchical descriptions (most detailed, pre-generated)
+  var hierEntry = _hierDescriptions[d.id];
+  if (hierEntry && hierEntry.description) {
+    bar.className = '';
+    bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(hierEntry.description) + '</span>');
+    _fitNodeDescFontSize();
+    return;
+  }
+
+  // 2. Check local cache (both hier-prefilled and per-node API results)
   var hash = _contentHashForNode(d);
   var cached = _nodeDescCache.get(d.id);
-
-  // If cached and hash matches, show immediately
-  if (cached && cached.contentHash === hash) {
+  if (cached && (cached.fromHier || cached.contentHash === hash)) {
     bar.className = '';
     bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(cached.description) + '</span>');
     _fitNodeDescFontSize();
     return;
   }
 
-  // Show loading state
+  // 3. Show loading state and fetch from per-node API
   bar.className = '';
   bar.innerHTML = _descBarHtml(d, '<span class="desc-text desc-loading">Generating description…</span>');
   _fitNodeDescFontSize();
@@ -5935,9 +6790,17 @@ function _showNodeDesc(d) {
 function _hideNodeDesc() {
   _nodeDescHoverId = null;
   if (_nodeDescAbort) { _nodeDescAbort.abort(); _nodeDescAbort = null; }
-  // Don't reset to overview if a preview walkthrough is active
+  // Don't reset if a preview walkthrough is active
   if (_previewScenes.length > 0) return;
-  _showGraphOverviewDesc();
+  _clearNodeDesc();
+}
+
+/** Reset the description bar to its empty placeholder state. */
+function _clearNodeDesc() {
+  var bar = document.getElementById('node-desc-bar');
+  if (!bar) return;
+  bar.className = 'empty';
+  bar.innerHTML = '<span class="desc-placeholder">Hover over a node to see its description</span>';
 }
 
 /** Show a description of the current graph view (when no node is hovered). */
@@ -5949,6 +6812,35 @@ function _showGraphOverviewDesc() {
     bar.className = 'empty';
     bar.innerHTML = '<span class="desc-placeholder">No graph loaded</span>';
     return;
+  }
+
+  // Check if we have a hierarchical root description
+  var rootDesc = _hierDescriptions['__root__'];
+  if (rootDesc && rootDesc.description && currentGraphLabel === 'Overview') {
+    bar.className = '';
+    var d = { id: '__root__', name: 'Codebase Overview', kind: 'root' };
+    bar.innerHTML = _descBarHtml(d, '<span class="desc-text">' + _escHtml(rootDesc.description) + '</span>');
+    _fitNodeDescFontSize();
+    return;
+  }
+
+  // Check for a hierarchical description matching a drilled-in node
+  if (currentGraphLabel && currentGraphLabel !== 'Overview') {
+    // Try to find a matching node in hierarchical descriptions
+    var matchingHier = null;
+    Object.keys(_hierDescriptions).forEach(function(nid) {
+      var entry = _hierDescriptions[nid];
+      if (entry && entry.name === currentGraphLabel && entry.description) {
+        matchingHier = entry;
+      }
+    });
+    if (matchingHier) {
+      bar.className = '';
+      var d2 = { id: matchingHier.name, name: matchingHier.name, kind: matchingHier.kind || 'group' };
+      bar.innerHTML = _descBarHtml(d2, '<span class="desc-text">' + _escHtml(matchingHier.description) + '</span>');
+      _fitNodeDescFontSize();
+      return;
+    }
   }
 
   var nodes = graphData.nodes;
@@ -6322,6 +7214,7 @@ function _reloadAllData() {
   // Reload everything
   loadGraph();
   loadDirectoryTree();
+  _startFsPoller();
   // Insights will reload when the panel is next opened (cached data cleared)
 }
 
@@ -6391,7 +7284,7 @@ function _browseDir(dirPath) {
 function _renderBrowser(container, data) {
   container.innerHTML = '';
 
-  // Navigation bar: current path + up button
+  // Navigation bar: current path + up button + new folder button
   var bar = document.createElement('div');
   bar.className = 'browser-bar';
 
@@ -6409,6 +7302,15 @@ function _renderBrowser(container, data) {
   pathLabel.textContent = data.current;
   pathLabel.title = data.current;
   bar.appendChild(pathLabel);
+
+  var newFolderBtn = document.createElement('button');
+  newFolderBtn.className = 'browser-up';
+  newFolderBtn.textContent = '+ New Folder';
+  newFolderBtn.style.marginLeft = '4px';
+  newFolderBtn.addEventListener('click', function () {
+    _showNewFolderRow(container, data.current);
+  });
+  bar.appendChild(newFolderBtn);
 
   container.appendChild(bar);
 
@@ -6450,6 +7352,76 @@ function _renderBrowser(container, data) {
 
   container.appendChild(list);
 
+  // New folder creation row (hidden by default, shown when "+ New Folder" is clicked)
+  var nfRow = document.createElement('div');
+  nfRow.className = 'browser-new-folder-row';
+  nfRow.id = 'np-new-folder-row';
+  nfRow.style.display = 'none';
+
+  var nfInput = document.createElement('input');
+  nfInput.type = 'text';
+  nfInput.placeholder = 'Folder name…';
+  nfInput.id = 'np-new-folder-input';
+
+  var nfConfirm = document.createElement('button');
+  nfConfirm.className = 'browser-nf-btn confirm';
+  nfConfirm.textContent = '✓ Create';
+
+  var nfCancel = document.createElement('button');
+  nfCancel.className = 'browser-nf-btn';
+  nfCancel.textContent = '✕';
+
+  var nfError = document.createElement('div');
+  nfError.className = 'browser-nf-error';
+  nfError.id = 'np-new-folder-error';
+
+  function _doCreateFolder() {
+    var folderName = nfInput.value.trim();
+    if (!folderName) { nfError.textContent = 'Name is required'; return; }
+    if (/[\/\\]/.test(folderName)) { nfError.textContent = 'Invalid characters in name'; return; }
+    nfError.textContent = '';
+    nfConfirm.disabled = true;
+    nfConfirm.textContent = '…';
+
+    var newPath = data.current.replace(/\/+$/, '') + '/' + folderName;
+
+    fetch(API_BASE + '/api/mkdir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: newPath }),
+    })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'Failed'); });
+        return r.json();
+      })
+      .then(function (result) {
+        // Navigate into the new folder
+        _browseDir(result.path);
+      })
+      .catch(function (err) {
+        nfError.textContent = err.message;
+        nfConfirm.disabled = false;
+        nfConfirm.textContent = '✓ Create';
+      });
+  }
+
+  nfConfirm.addEventListener('click', _doCreateFolder);
+  nfInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') _doCreateFolder();
+    if (e.key === 'Escape') { nfRow.style.display = 'none'; nfError.textContent = ''; }
+  });
+  nfCancel.addEventListener('click', function () {
+    nfRow.style.display = 'none';
+    nfError.textContent = '';
+    nfInput.value = '';
+  });
+
+  nfRow.appendChild(nfInput);
+  nfRow.appendChild(nfConfirm);
+  nfRow.appendChild(nfCancel);
+  container.appendChild(nfRow);
+  container.appendChild(nfError);
+
   // Select bar: pick the current directory
   var selectRow = document.createElement('div');
   selectRow.className = 'browser-select-row';
@@ -6472,6 +7444,20 @@ function _renderBrowser(container, data) {
   selectRow.appendChild(selBtn);
 
   container.appendChild(selectRow);
+}
+
+function _showNewFolderRow(container, currentPath) {
+  var row = document.getElementById('np-new-folder-row');
+  if (row) {
+    row.style.display = 'flex';
+    var input = document.getElementById('np-new-folder-input');
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+    var errEl = document.getElementById('np-new-folder-error');
+    if (errEl) errEl.textContent = '';
+  }
 }
 
 document.getElementById('np-create').addEventListener('click', function () {
@@ -6518,8 +7504,72 @@ document.getElementById('np-path').addEventListener('keydown', function (e) {
 
 // ── App boot ───────────────────────────────────────────────────────
 function _bootApp() {
+  if (!_currentProjectId || _projectsList.length === 0) {
+    // No active project — show a prompt instead of making failing requests
+    document.querySelectorAll('[data-loading]').forEach(function(el) {
+      el.textContent = 'No project selected — use the Project dropdown to create one.';
+      el.style.color = 'var(--text-muted)';
+    });
+    _stopFsPoller();
+    return;
+  }
   loadGraph();
   loadDirectoryTree();
+  _startFsPoller();
+}
+
+// ── Filesystem change poller ───────────────────────────────────────
+// Polls /api/fs/checksum to detect external file changes (files
+// created, edited, or deleted outside the app) and triggers a graph
+// refresh + file tree reload when the checksum changes.
+
+var _fsPollerTimer = null;
+var _fsLastChecksum = null;
+var _fsPollerInterval = 3000;  // ms between polls
+var _fsPollInFlight = false;
+
+function _startFsPoller() {
+  _stopFsPoller();
+  _fsLastChecksum = null;
+  // Seed the initial checksum
+  _fsPollOnce(true);
+  _fsPollerTimer = setInterval(function() { _fsPollOnce(false); }, _fsPollerInterval);
+}
+
+function _stopFsPoller() {
+  if (_fsPollerTimer) { clearInterval(_fsPollerTimer); _fsPollerTimer = null; }
+  _fsLastChecksum = null;
+}
+
+function _fsPollOnce(seedOnly) {
+  if (_fsPollInFlight) return;
+  _fsPollInFlight = true;
+  fetch(API_BASE + '/api/fs/checksum')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(data) {
+      _fsPollInFlight = false;
+      if (!data || !data.checksum) return;
+      var prev = _fsLastChecksum;
+      _fsLastChecksum = data.checksum;
+      // On first poll just record the baseline; don't trigger a refresh
+      if (seedOnly || prev === null) return;
+      // If checksum changed, the filesystem was modified externally
+      if (data.checksum !== prev) {
+        _onExternalFsChange();
+      }
+    })
+    .catch(function() { _fsPollInFlight = false; });
+}
+
+function _onExternalFsChange() {
+  // Same pipeline as agent file changes: refresh file tree + re-analyze graph
+  // Use the existing debounced flush so multiple rapid changes collapse
+  _fileChangePending.push({ changeType: 'external', path: '*' });
+  if (_fileChangeRefreshTimer) clearTimeout(_fileChangeRefreshTimer);
+  _fileChangeRefreshTimer = setTimeout(function () {
+    _fileChangeRefreshTimer = null;
+    _flushFileChangeRefresh();
+  }, 400);
 }
 
 // ── Shortcuts panel ────────────────────────────────────────────────
@@ -6948,7 +7998,47 @@ function exportGraphSVG() {
 }
 
 // Wire up export button
-document.getElementById("wm-export-btn").addEventListener("click", exportGraphSVG);// Key handler for label mode
+document.getElementById("wm-export-btn").addEventListener("click", exportGraphSVG);
+
+// Wire up re-analyze button
+document.getElementById("wm-reanalyze-btn").addEventListener("click", async function() {
+  var btn = document.getElementById("wm-reanalyze-btn");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '↻ Analyzing…';
+  btn.style.color = 'var(--accent)';
+  try {
+    var resp = await fetch(API_BASE + '/api/reanalyze', { method: 'POST' });
+    if (!resp.ok) {
+      var errData = {};
+      try { errData = await resp.json(); } catch(e) {}
+      throw new Error(errData.error || 'HTTP ' + resp.status);
+    }
+    // Clear frontend caches
+    _insightsData = null;
+    _insightsLoading = false;
+    _hierDescriptions = {};
+    _hierDescLoaded = false;
+    _hierDescLoading = false;
+    if (_hierDescPollTimer) { clearTimeout(_hierDescPollTimer); _hierDescPollTimer = null; }
+    _nodeDescCache.clear();
+    _llmEnrichDone = false;
+    _llmContentClassifications = {};
+    // Reload the graph
+    await loadGraph();
+    btn.textContent = '✓ Done';
+    setTimeout(function() { btn.textContent = '↻ Re-analyze'; btn.style.color = ''; }, 2000);
+  } catch(err) {
+    btn.textContent = '✗ Error';
+    btn.style.color = 'var(--red)';
+    console.error('Re-analyze failed:', err);
+    setTimeout(function() { btn.textContent = '↻ Re-analyze'; btn.style.color = ''; }, 3000);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Key handler for label mode
 document.addEventListener("keydown", function(e) {
   var tag = (document.activeElement || {}).tagName;
   var isTyping = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT");

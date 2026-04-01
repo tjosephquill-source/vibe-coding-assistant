@@ -1,4 +1,4 @@
-.PHONY: dev analyze test
+.PHONY: dev analyze test lint
 
 # Start the dev server (frontend + API on port 8000)
 dev:
@@ -7,6 +7,14 @@ dev:
 # Run the analyzer standalone and pretty-print the graph JSON
 analyze:
 	venv/bin/python -m backend.analyzer mock_codebase
+
+# Run the test suite
+test:
+	venv/bin/python -m pytest tests/ -v
+
+# Run tests with coverage
+test-cov:
+	venv/bin/python -m pytest tests/ -v --tb=short
 
 # Install dependencies
 install:
