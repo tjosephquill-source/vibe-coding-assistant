@@ -368,109 +368,6 @@
   .node-group { cursor:pointer; }
   .node-group:hover .node-rect { filter:brightness(1.3) drop-shadow(0 0 6px rgba(232,168,36,.3)); }
 
-  /* ── COD:MW Tactical Node Entrance Animation ─────────────── */
-
-  /* Phase 1: Vertical beam of light slices in */
-  @keyframes nodeMW_beamSlice {
-    0%   { transform:scaleX(0) scaleY(0); opacity:0; }
-    15%  { transform:scaleX(0.03) scaleY(2.8); opacity:1; }
-    35%  { transform:scaleX(0.03) scaleY(2.8); opacity:1; }
-    55%  { transform:scaleX(1.15) scaleY(1.05); opacity:1; }
-    75%  { transform:scaleX(1.0) scaleY(1.0); opacity:1; }
-    100% { transform:scaleX(1.0) scaleY(1.0); opacity:1; }
-  }
-
-  /* Phase 2: Intense flash that washes out then settles */
-  @keyframes nodeMW_flash {
-    0%   { filter:brightness(1) drop-shadow(0 0 0px rgba(109,189,74,0)); }
-    10%  { filter:brightness(4) drop-shadow(0 0 35px rgba(109,189,74,1)); }
-    25%  { filter:brightness(2.5) drop-shadow(0 0 25px rgba(232,168,36,.9)); }
-    50%  { filter:brightness(1.6) drop-shadow(0 0 14px rgba(109,189,74,.5)); }
-    100% { filter:brightness(1) drop-shadow(0 0 0px rgba(109,189,74,0)); }
-  }
-
-  /* Phase 3: Static / electricity distortion on the rect */
-  @keyframes nodeMW_static {
-    0%   { clip-path:inset(0 0 0 0); }
-    5%   { clip-path:inset(0 0 85% 0); }
-    10%  { clip-path:inset(40% 0 0 0); }
-    15%  { clip-path:inset(0 0 0 0); }
-    20%  { clip-path:inset(0 20% 60% 0); }
-    25%  { clip-path:inset(70% 0 0 10%); }
-    30%  { clip-path:inset(0 0 0 0); }
-    35%  { clip-path:inset(0 0 45% 0); }
-    40%  { clip-path:inset(0 0 0 0); }
-    50%  { clip-path:inset(0 0 0 0); }
-    100% { clip-path:inset(0 0 0 0); }
-  }
-
-  /* Phase 4: Horizontal scan-line sweep */
-  @keyframes nodeMW_scanline {
-    0%   { background-position:0 -100%; opacity:1; }
-    60%  { background-position:0 200%; opacity:1; }
-    100% { background-position:0 200%; opacity:0; }
-  }
-
-  /* Phase 5: Electric arc flicker around border */
-  @keyframes nodeMW_borderArc {
-    0%   { stroke-dashoffset:0; stroke-opacity:1; }
-    20%  { stroke-dashoffset:-30; stroke-opacity:0.3; }
-    40%  { stroke-dashoffset:-60; stroke-opacity:1; }
-    60%  { stroke-dashoffset:-100; stroke-opacity:0.5; }
-    80%  { stroke-dashoffset:-140; stroke-opacity:1; }
-    100% { stroke-dashoffset:-200; stroke-opacity:0; }
-  }
-
-  /* Phase 6: Particle burst ring */
-  @keyframes nodeMW_ring {
-    0%   { r:4; opacity:1; stroke-width:3; }
-    40%  { r:80; opacity:.7; stroke-width:1.5; }
-    100% { r:140; opacity:0; stroke-width:0.5; }
-  }
-
-  /* Horizontal glitch jitter */
-  @keyframes nodeMW_glitch {
-    0%   { transform:translate(0,0); }
-    10%  { transform:translate(-3px,1px); }
-    20%  { transform:translate(4px,-1px); }
-    30%  { transform:translate(-2px,0px); }
-    40%  { transform:translate(0,0); }
-    100% { transform:translate(0,0); }
-  }
-
-  .node-group.node-created {
-    animation:
-      nodeMW_beamSlice .7s cubic-bezier(.22,.68,.36,1) both,
-      nodeMW_glitch .5s ease-out .15s both;
-  }
-  .node-group.node-created .node-rect {
-    animation:
-      nodeMW_flash .9s ease-out .05s both,
-      nodeMW_static .6s steps(2,end) .1s both;
-  }
-  .node-group.node-created .mw-arc-border {
-    animation:nodeMW_borderArc .8s ease-out .1s both;
-  }
-  .node-group.node-created .mw-burst-ring {
-    animation:nodeMW_ring .7s ease-out .05s both;
-  }
-
-  /* The electricity overlay lines */
-  .mw-arc-border {
-    fill:none; stroke:#6dbd4a; stroke-width:2;
-    stroke-dasharray:8,6,2,6; stroke-opacity:0;
-    pointer-events:none;
-  }
-  .mw-burst-ring {
-    fill:none; stroke:#e8a824; stroke-width:2; opacity:0;
-    pointer-events:none;
-  }
-  .mw-beam-line {
-    pointer-events:none;
-  }
-  .mw-scanline-bar {
-    pointer-events:none;
-  }
 
   .node-rect { stroke-width:1.5; rx:2px; ry:2px; transition:opacity .2s, filter .2s; }
   .node-rect.class  { fill:#1a2610; stroke:#6dbd4a; }
@@ -4205,7 +4102,6 @@ let graphStack = [];
 let currentGraphLabel = "Overview";
 let simulation = null;
 let selectedNode = null;
-var _prevRenderedNodeIds = new Set();  // tracks node IDs from previous render for new-node animation
 
 const activeNodeKinds = new Set(["class", "method", "island_chain", "group"]);
 const activeEdgeKinds = new Set(["inherits", "imports", "contains", "instantiates", "uses_type", "calls"]);
@@ -5718,152 +5614,8 @@ function initDetailView(overviewSvg, overviewG, overviewZoomBehavior, nodeData) 
   d3.select(window).on("mouseup.detailnav", function() { _detailIsDragging = false; });
 }
 
-/**
- * Tag newly created nodes with an entrance animation.
- * Compares current nodeData IDs against _prevRenderedNodeIds (from the
- * previous render) and adds the 'node-created' CSS class to new entries.
- * Updates _prevRenderedNodeIds for the next render cycle.
- */
-function _tagNewNodes(nodeSelection, nodeData, oldNodeIds) {
-  // Build the current set of node IDs
-  var currentIds = new Set(nodeData.map(function(n) { return n.id; }));
-  // Update the global tracking set for next time
-  _prevRenderedNodeIds = currentIds;
-
-  // Only animate if there was a previous render to compare against
-  // (skip on first load — everything is new, animation would be noisy)
-  if (oldNodeIds.size === 0) return;
-
-  // Find new IDs
-  var newIds = new Set();
-  currentIds.forEach(function(id) {
-    if (!oldNodeIds.has(id)) newIds.add(id);
-  });
-  if (newIds.size === 0) return;
-
-  // Stagger delay so nodes appear sequentially like a tactical data-link
-  var staggerIdx = 0;
-  var STAGGER_MS = 90;
-
-  // Apply COD:MW animation class + inject SVG overlay effects
-  nodeSelection.each(function(d) {
-    if (!newIds.has(d.id)) return;
-
-    var el = d3.select(this);
-    var self = this;
-    var delay = staggerIdx * STAGGER_MS;
-    staggerIdx++;
-
-    var nw = (NODE_SIZE[d.kind] && NODE_SIZE[d.kind].w) || 160;
-    var nh = (NODE_SIZE[d.kind] && NODE_SIZE[d.kind].h) || 60;
-
-    // Apply CSS animation class after stagger delay
-    setTimeout(function() {
-      el.classed('node-created', true);
-
-      // ── Electric arc border overlay ──
-      var arcRect = el.insert('rect', ':first-child')
-        .attr('class', 'mw-arc-border')
-        .attr('x', -nw / 2 - 3)
-        .attr('y', -nh / 2 - 3)
-        .attr('width', nw + 6)
-        .attr('height', nh + 6)
-        .attr('rx', 3).attr('ry', 3);
-
-      // ── Expanding ring burst ──
-      var ring = el.insert('circle', ':first-child')
-        .attr('class', 'mw-burst-ring')
-        .attr('cx', 0).attr('cy', 0).attr('r', 4);
-
-      // ── Second ring with offset for depth ──
-      var ring2 = el.insert('circle', ':first-child')
-        .attr('class', 'mw-burst-ring')
-        .attr('cx', 0).attr('cy', 0).attr('r', 4)
-        .style('animation-delay', (0.12) + 's')
-        .style('stroke', '#6dbd4a');
-
-      // ── Vertical beam of light (bright line that precedes the node) ──
-      var beam = el.insert('line', ':first-child')
-        .attr('class', 'mw-beam-line')
-        .attr('x1', 0).attr('y1', -nh * 1.8)
-        .attr('x2', 0).attr('y2', nh * 1.8)
-        .attr('stroke', '#e8a824')
-        .attr('stroke-width', 3)
-        .attr('stroke-opacity', 0);
-
-      // Animate beam: flash on, thin out, disappear
-      beam.transition().duration(80)
-        .attr('stroke-opacity', 1)
-        .attr('stroke-width', 6)
-        .transition().duration(200)
-        .attr('stroke-opacity', 0.8)
-        .attr('stroke-width', 1)
-        .transition().duration(300)
-        .attr('stroke-opacity', 0)
-        .remove();
-
-      // ── Horizontal scan-line bar (sweeps down the node) ──
-      var scanFO = el.insert('foreignObject', ':first-child')
-        .attr('class', 'mw-scanline-bar')
-        .attr('x', -nw / 2)
-        .attr('y', -nh / 2)
-        .attr('width', nw)
-        .attr('height', nh)
-        .html('<div xmlns="http://www.w3.org/1999/xhtml" style="' +
-          'width:100%;height:100%;overflow:hidden;pointer-events:none;' +
-          'background:repeating-linear-gradient(0deg,' +
-          'transparent 0px,transparent 2px,' +
-          'rgba(109,189,74,0.12) 2px,rgba(109,189,74,0.12) 4px);' +
-          'animation:nodeMW_scanline .7s ease-out both;' +
-          '"></div>');
-
-      // ── Electricity / static sparks (random small lines) ──
-      var sparkCount = 6 + Math.floor(Math.random() * 5);
-      for (var si = 0; si < sparkCount; si++) {
-        (function(i) {
-          var sx = (Math.random() - 0.5) * nw;
-          var sy = (Math.random() - 0.5) * nh;
-          var ex = sx + (Math.random() - 0.5) * 30;
-          var ey = sy + (Math.random() - 0.5) * 20;
-          var mx = (sx + ex) / 2 + (Math.random() - 0.5) * 18;
-          var my = (sy + ey) / 2 + (Math.random() - 0.5) * 14;
-          var sparkDelay = Math.random() * 350;
-          var sparkDur = 120 + Math.random() * 200;
-          var sparkColor = Math.random() > 0.5 ? '#6dbd4a' : '#e8a824';
-
-          var spark = el.append('polyline')
-            .attr('points', sx + ',' + sy + ' ' + mx + ',' + my + ' ' + ex + ',' + ey)
-            .attr('fill', 'none')
-            .attr('stroke', sparkColor)
-            .attr('stroke-width', 1 + Math.random())
-            .attr('stroke-opacity', 0)
-            .style('pointer-events', 'none')
-            .style('filter', 'drop-shadow(0 0 3px ' + sparkColor + ')');
-
-          setTimeout(function() {
-            spark.transition().duration(40)
-              .attr('stroke-opacity', 0.9)
-              .transition().duration(sparkDur)
-              .attr('stroke-opacity', 0)
-              .remove();
-          }, sparkDelay);
-        })(si);
-      }
-
-      // ── Cleanup: remove overlay elements after animations complete ──
-      var cleanupDelay = 1200;
-      setTimeout(function() {
-        el.classed('node-created', false);
-        el.selectAll('.mw-arc-border, .mw-burst-ring, .mw-beam-line, .mw-scanline-bar').remove();
-      }, cleanupDelay);
-
-    }, delay);
-  });
-}
 
 function renderGraph() {
-  // Snapshot previous node IDs for new-node entrance animation
-  var _oldNodeIds = new Set(_prevRenderedNodeIds);
 
   // Full cleanup of previous detail view
   cleanupDetailView();
@@ -5946,14 +5698,6 @@ function renderGraph() {
   defs.append("marker").attr("id","arrow-uses_type").attr("viewBox","0 -6 12 12").attr("refX",12).attr("refY",0).attr("markerWidth",12).attr("markerHeight",12).attr("markerUnits","userSpaceOnUse").attr("orient","auto").append("path").attr("d","M0,-6L12,0L0,6").attr("fill","none").attr("stroke","#6dbd4a").attr("stroke-width",2.5);
   defs.append("marker").attr("id","diamond-contains-end").attr("viewBox","-1 -7 18 14").attr("refX",0).attr("refY",0).attr("markerWidth",14).attr("markerHeight",14).attr("markerUnits","userSpaceOnUse").attr("orient","auto-start-reverse").append("path").attr("d","M0,0L8,-6L16,0L8,6Z").attr("fill","#3d4a2e").attr("stroke","#3d4a2e");
 
-  // ── COD:MW glow filters for node entrance FX ──
-  var mwGlow = defs.append("filter").attr("id","mw-glow").attr("x","-50%").attr("y","-50%").attr("width","200%").attr("height","200%");
-  mwGlow.append("feGaussianBlur").attr("in","SourceGraphic").attr("stdDeviation","6").attr("result","blur");
-  mwGlow.append("feMerge").html('<feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
-
-  var mwBeamGlow = defs.append("filter").attr("id","mw-beam-glow").attr("x","-100%").attr("y","-100%").attr("width","300%").attr("height","300%");
-  mwBeamGlow.append("feGaussianBlur").attr("in","SourceGraphic").attr("stdDeviation","10").attr("result","blur");
-  mwBeamGlow.append("feMerge").html('<feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/>');
 
   const g = svg.append("g");
   const zoomBehavior = d3.zoom()
@@ -6129,8 +5873,6 @@ function renderGraph() {
     link.attr("d", edgePath);
     edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
 
-    // Tag newly created nodes with entrance animation
-    _tagNewNodes(node, nodeData, _oldNodeIds);
     const ctr = document.getElementById("graph-container");
     if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
     var eid1 = setTimeout(function() {
@@ -6183,8 +5925,6 @@ function renderGraph() {
       node.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
       link.attr("d", edgePath);
     edgeLabel.attr("x", d => _edgeLabelPos(d).x).attr("y", d => _edgeLabelPos(d).y);
-      // Tag newly created nodes with entrance animation
-      _tagNewNodes(node, nodeData, _oldNodeIds);
       const ctr = document.getElementById("graph-container");
       if (ctr) fitGraphToViewport(svg, zoomBehavior, nodeData, ctr.clientWidth, ctr.clientHeight, 20, false);
       var eidGrid = setTimeout(function() {
@@ -6272,8 +6012,6 @@ function renderGraph() {
       }
 
       snapNodesToGrid(nodeData, svg, g, node, link, edgeLabel, linkData, zoomBehavior);
-      // Tag newly created nodes with entrance animation
-      _tagNewNodes(node, nodeData, _oldNodeIds);
       // Final safety check after grid snap animation
       var eid2 = setTimeout(function() {
         ensureAllNodesVisible(svg, zoomBehavior, nodeData);
