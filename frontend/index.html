@@ -1014,13 +1014,6 @@
     padding:5px 12px; min-height:32px;
     flex-shrink:0; flex-wrap:wrap;
   }
-  .preview-level-select {
-    background:var(--surface-alt); border:1px solid var(--accent-dim);
-    color:var(--text); font-family:'Share Tech Mono',monospace;
-    font-size:11px; padding:3px 8px; cursor:pointer;
-    clip-path:var(--clip-sm);
-  }
-  .preview-level-select:focus { border-color:var(--accent); outline:none; box-shadow:0 0 6px var(--accent-glow); }
   .preview-btn {
     background:var(--surface-alt); border:1px solid var(--accent-dim);
     color:var(--text); font-size:14px; padding:3px 10px;
@@ -2500,14 +2493,6 @@ function _previewRenderPanel(container) {
   var controls = document.createElement('div');
   controls.className = 'preview-controls';
 
-  var levelSelect = document.createElement('select');
-  levelSelect.className = 'preview-level-select';
-  levelSelect.id = 'preview-level';
-  [['high','High'],['medium','Medium'],['low','Low']].forEach(function(opt) {
-    var o = document.createElement('option');
-    o.value = opt[0]; o.textContent = opt[1];
-    levelSelect.appendChild(o);
-  });
 
   var backBtn = document.createElement('button');
   backBtn.className = 'preview-btn';
@@ -2566,7 +2551,6 @@ function _previewRenderPanel(container) {
     }
   });
 
-  controls.appendChild(levelSelect);
   controls.appendChild(backBtn);
   controls.appendChild(playBtn);
   controls.appendChild(pauseBtn);
@@ -2643,8 +2627,6 @@ function _previewUpdateSkipButtons() {
 async function _previewStart(focusNodeId) {
   if (_previewPlaying) return;
 
-  var level = document.getElementById('preview-level');
-  var levelVal = level ? level.value : 'high';
   var playBtn = document.getElementById('preview-play');
   var pauseBtn = document.getElementById('preview-pause');
   var stopBtn = document.getElementById('preview-stop');
@@ -2718,7 +2700,7 @@ async function _previewStart(focusNodeId) {
       _previewShowNarration('Generating walkthrough…', true);
     }
 
-    var previewBody = { level: levelVal };
+    var previewBody = {};
     if (focusNodeId) previewBody.focus_node_id = focusNodeId;
 
     var resp = await fetch(API_BASE + '/api/preview', {

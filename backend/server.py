@@ -926,7 +926,7 @@ def get_descriptions():
 
 # ── Preview walkthrough endpoint ─────────────────────────────────────
 
-_preview_cache: dict[str, list] = {}  # (fingerprint|level) → scenes
+_preview_cache: dict[str, list] = {}  # fingerprint → scenes
 
 
 _CONTENT_TYPE_MAP = {
@@ -946,22 +946,18 @@ _CONTENT_TYPES_LIST = list(_CONTENT_TYPE_MAP.keys())
 async def generate_preview(request: Request):
     """Generate a scripted architecture walkthrough driven by the description hierarchy.
 
-    Body: {level: "high"|"medium"|"low", focus_node_id?: str}
+    Body: {focus_node_id?: str}
 
-    High-level:  root + direct children → explains what the codebase *does*
-    Medium-level: children + grandchildren → explains key subsystems / classes
-    Low-level:   grandchildren + leaf methods → explains specific behaviour
+    Produces a high-level walkthrough: root + direct children → explains
+    what the codebase *does*.
 
     If focus_node_id is given, the walkthrough starts from that node's
     context in the hierarchy (its parent for framing, its children for detail).
 
-    Returns: {scenes: [...], level: str}
+    Returns: {scenes: [...]}
     """
     body = await request.json()
-    level = body.get("level", "high")
     focus_node_id = body.get("focus_node_id")
-    if level not in ("high", "medium", "low"):
-        level = "high"
 
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
@@ -980,16 +976,13 @@ async def generate_preview(request: Request):
         )
 
     # Load graph data for node IDs that the frontend can focus on
-    if level == "low":
-        graph_dict = _get_or_analyze(abs_path, abstract=False)
-    else:
-        graph_dict = _get_or_analyze(abs_path, abstract=True)
+    graph_dict = _get_or_analyze(abs_path, abstract=True)
 
     nodes = graph_dict.get("nodes", [])
     edges = graph_dict.get("edges", [])
     node_id_set = {n["id"] for n in nodes}
 
-    # ── Build the description context for the LLM based on level ────
+    # ── Build the description context for the LLM ─────────────────
 
     def _desc_entry(nid: str) -> dict | None:
         """Return a compact description dict for a node, or None."""
@@ -1036,63 +1029,37 @@ async def generate_preview(request: Request):
             if parent_entry:
                 context_nodes.append(parent_entry)
             context_nodes.append(focus_entry)
-            # Add children based on level
-            child_depth = {"high": 1, "medium": 2, "low": 3}.get(level, 1)
-            context_nodes.extend(_collect_children(focus_node_id, child_depth))
+            # Add direct children for context
+            context_nodes.extend(_collect_children(focus_node_id, 1))
             walkthrough_scope = (
                 f"Focused on '{focus_entry['name']}' ({focus_entry['kind']}). "
                 f"Explain its purpose in the broader system, then walk through "
-                f"its internals at {'high' if level == 'high' else 'detailed'} level."
+                f"its internals at high level."
             )
     else:
         # ── Full codebase walkthrough ───────────────────────────────
-        if level == "high":
-            # Root + children + grandchildren for richer context
-            if root_entry:
-                context_nodes.append(root_entry)
-            context_nodes.extend(_collect_children("__root__", depth=2))
-            walkthrough_scope = (
-                "Give a high-level overview of what this SOFTWARE does for its USERS. "
-                "Many of the descriptions below describe infrastructure components "
-                "(UI layout, HTTP servers, window managers, file I/O, caching). "
-                "Those are HOW the software works internally — ignore them. "
-                "Instead, find the components that describe the software's actual "
-                "PURPOSE and CAPABILITIES — the thing a user launches this app to do. "
-                "Think: what problem does this software solve? What does it produce? "
-                "Who uses it and why?"
-            )
+        # Root + children + grandchildren for richer context
+        if root_entry:
+            context_nodes.append(root_entry)
+        context_nodes.extend(_collect_children("__root__", depth=2))
+        walkthrough_scope = (
+            "Give a high-level overview of what this SOFTWARE does for its USERS. "
+            "Many of the descriptions below describe infrastructure components "
+            "(UI layout, HTTP servers, window managers, file I/O, caching). "
+            "Those are HOW the software works internally — ignore them. "
+            "Instead, find the components that describe the software's actual "
+            "PURPOSE and CAPABILITIES — the thing a user launches this app to do. "
+            "Think: what problem does this software solve? What does it produce? "
+            "Who uses it and why?"
+        )
 
-        elif level == "medium":
-            # Root + children + grandchildren → subsystems & key classes
-            if root_entry:
-                context_nodes.append(root_entry)
-            context_nodes.extend(_collect_children("__root__", depth=2))
-            walkthrough_scope = (
-                "Walk through the codebase's key subsystems and important classes. "
-                "Start with a brief recap of the codebase's purpose, then dive into "
-                "each major area: what it handles, its key classes, and how data flows "
-                "between subsystems. The audience understands the high-level purpose — "
-                "now they want to understand the architecture."
-            )
-
-        else:  # low
-            # Full depth → methods, call chains, data flow
-            if root_entry:
-                context_nodes.append(root_entry)
-            context_nodes.extend(_collect_children("__root__", depth=4))
-            walkthrough_scope = (
-                "Walk through the codebase at implementation level: specific methods, "
-                "call chains, and data flow. Start with a one-sentence purpose recap, "
-                "then trace how data enters the system, is processed, and exits. "
-                "Name specific methods, parameters, and return values."
-            )
 
     # ── Cache key ───────────────────────────────────────────────────
     ctx_ids = sorted(e["id"] for e in context_nodes)
-    cache_input = f"{','.join(ctx_ids)}|{level}|{focus_node_id or ''}"
+    cache_input = f"{','.join(ctx_ids)}|{focus_node_id or ''}"
     cache_key = hashlib.md5(cache_input.encode()).hexdigest()[:16]
     if cache_key in _preview_cache:
-        return {"scenes": _preview_cache[cache_key], "level": level, "cached": True}
+        return {"scenes": _preview_cache[cache_key], "cached": True}
 
     # ── Build LLM context ──────────────────────────────────────────
     # Provide descriptions as a hierarchy the LLM can read
@@ -1127,7 +1094,7 @@ async def generate_preview(request: Request):
     if len(graph_ref) > 6000:
         graph_ref = graph_ref[:6000] + "\n… [truncated]"
 
-    # ── Build level-specific system prompt ──────────────────────────
+    # ── Build system prompt ────────────────────────────────────────
 
     _scene_schema = """\
 Scene schema:
@@ -1202,9 +1169,8 @@ Use these terms naturally in your narration. The user is looking at this graph U
 
     _target_glossary = _build_target_app_glossary(hier_descs)
 
-    if level == "high":
-        scene_count = "4-6"
-        system_msg = f"""You are narrating a high-level product overview of a software system displayed as an interactive architecture graph. Your audience has never seen this codebase. Explain what this software IS and what it DOES — like a senior engineer explaining the product to a new team member while pointing at the graph on screen.
+    scene_count = "4-6"
+    system_msg = f"""You are narrating a high-level product overview of a software system displayed as an interactive architecture graph. Your audience has never seen this codebase. Explain what this software IS and what it DOES — like a senior engineer explaining the product to a new team member while pointing at the graph on screen.
 
 {_tool_ui_terms}
 
@@ -1228,58 +1194,8 @@ Rules:
 - Refer to what the user can SEE on the graph — "this node represents...", "the edges between these nodes show...", "you can drill down into this group to see..."
 - Do NOT just list component names — explain what each area DOES and how they connect"""
 
-    elif level == "medium":
-        scene_count = "6-12"
-        system_msg = f"""You are narrating an architecture walkthrough for a developer who already knows what this software does and now wants to understand how it is built. Be direct and precise. Short sentences. No filler.
-
-{_tool_ui_terms}
-
-── ABOUT THE ANALYSED SOFTWARE ──
-{_target_glossary}
-
-You will be given DESCRIPTIONS of components at various levels. Use them as ground truth to explain the architecture: what the major subsystems are, what each one is responsible for, and how data flows between them. Name the nodes and groups visible on the graph. Refer to edges to explain relationships.
-
-{_scene_schema}
-
-Rules:
-{_shared_rules}
-- Generate {scene_count} scenes
-- {walkthrough_scope}
-- Opening scene: "zoom_out_all" — one sentence recapping the software's purpose, then transition to architecture
-- Walk through logically: entry points → core processing → data layer → output
-- Name the nodes and groups on the graph and explain what each handles
-- Reference edges to explain how data flows between subsystems
-- Mention where the user can drill down for more detail
-- Final scene: "zoom_out_all" — summarize the architectural pattern
-- Tone: direct, technical but accessible. Like a senior engineer briefing a new teammate while pointing at the architecture graph."""
-
-    else:  # low
-        scene_count = "10-18"
-        system_msg = f"""You are narrating a detailed code walkthrough for a developer who wants to understand the implementation. Be precise and specific. Name methods, parameters, and return types. Trace call chains and data flow.
-
-{_tool_ui_terms}
-
-── ABOUT THE ANALYSED SOFTWARE ──
-{_target_glossary}
-
-You will be given DESCRIPTIONS of components including leaf-level methods. Use them to trace how specific operations work end-to-end. Reference the actual nodes and edges visible on the graph.
-
-{_scene_schema}
-
-Rules:
-{_shared_rules}
-- Generate {scene_count} scenes
-- {walkthrough_scope}
-- Opening scene: "zoom_out_all" — one sentence on the software's purpose
-- Then trace specific operations: how does a request enter? What methods process it? What gets returned?
-- Name specific methods, their parameters, and return values — point to the nodes on the graph
-- Show call chains via edge_ids where relevant, explaining "this node calls that node"
-- Mention drill-down paths: "if you drill down into this node, you'll see..."
-- Final scene: "zoom_out_all" — key implementation patterns
-- Tone: precise, technical. Like a senior engineer walking through the code while pointing at the architecture graph."""
-
     user_msg = (
-        f"Generate a {level}-level architecture walkthrough.\n\n"
+        f"Generate a high-level architecture walkthrough.\n\n"
         f"── DESCRIPTIONS (ground truth) ──\n{descriptions_context}\n\n"
         f"── VISIBLE GRAPH NODES (for camera focus) ──\n{graph_ref}"
     )
@@ -1304,7 +1220,7 @@ Rules:
         if isinstance(scenes, dict):
             scenes = [scenes]
         _preview_cache[cache_key] = scenes
-        return {"scenes": scenes, "level": level, "cached": False}
+        return {"scenes": scenes, "cached": False}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

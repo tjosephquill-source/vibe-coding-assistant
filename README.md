@@ -14,7 +14,7 @@
 - **Interactive graph visualisation** — D3.js force-directed graph with zoom, pan, search, and drill-down
 - **AI-powered descriptions** — Hierarchical LLM-generated descriptions for every node in the graph
 - **Architecture insights** — Automatic detection of circular dependencies, god classes, orphan modules, hub classes, and layer violations
-- **Guided walkthroughs** — AI-narrated architecture tours at high, medium, and low detail levels, with optional text-to-speech
+- **Guided walkthroughs** — AI-narrated architecture tours with optional text-to-speech
 - **LLM chat** — Ask questions about the codebase with tool-use (read files, search code, navigate graph)
 - **Project management** — Register multiple codebases and switch between them
 - **IDE-style UI** — Resizable split panels, tab groups, floating windows, and layout persistence
