@@ -1403,7 +1403,6 @@
   <div class="ctx-item" id="ctx-view-code"><span class="ctx-icon">📝</span>View Code</div>
   <div class="ctx-item" id="ctx-reveal-file"><span class="ctx-icon">📁</span>Reveal in Files</div>
   <div class="ctx-sep"></div>
-  <div class="ctx-item" id="ctx-walkthrough"><span class="ctx-icon">🎬</span>Walkthrough</div>
   <div class="ctx-item" id="ctx-summary"><span class="ctx-icon">🤖</span>Summary</div>
   <div class="ctx-item" id="ctx-query"><span class="ctx-icon">💬</span>Query</div>
 </div>
@@ -3613,7 +3612,7 @@ function _ensureChatPanelOpen() {
  */
 function _buildNodeContext(d) {
   var parts = [];
-  parts.push('Node: ' + d.name);
+  parts.push('Node: ' + (d.display_name||d.name));
   parts.push('Kind: ' + d.kind);
   if (d.qualified_name) parts.push('Qualified name: ' + d.qualified_name);
   if (d.file_path) parts.push('File: ' + d.file_path);
@@ -3628,7 +3627,7 @@ function _buildNodeContext(d) {
   if (graphData && graphData.edges) {
     var incoming = graphData.edges.filter(function(e) { return _nid(e.target) === d.id; });
     var outgoing = graphData.edges.filter(function(e) { return _nid(e.source) === d.id; });
-    var findName = function(id) { var rid = typeof id === 'object' ? id.id : id; var n = graphData.nodes.find(function(n) { return n.id === rid; }); return n ? n.name : rid; };
+    var findName = function(id) { var rid = typeof id === 'object' ? id.id : id; var n = graphData.nodes.find(function(n) { return n.id === rid; }); return n ? (n.display_name||n.name) : rid; };
     if (outgoing.length > 0) {
       parts.push('Outgoing edges: ' + outgoing.slice(0, 10).map(function(e) { return e.kind + ' → ' + findName(e.target); }).join(', ') + (outgoing.length > 10 ? '…' : ''));
     }
@@ -3770,13 +3769,13 @@ function chatQueryNode(d) {
       var ctx = _buildNodeContext(d);
       _chatRenderMessage({
         role: 'system',
-        content: '◆ Context loaded: ' + d.name + ' (' + d.kind + ')'
+        content: '◆ Context loaded: ' + (d.display_name||d.name) + ' (' + d.kind + ')'
       }, messagesEl);
     }
 
     // Pre-fill the input with the context prefix so the LLM gets it
     if (input) {
-      var prefix = 'Regarding ' + d.kind + ' `' + d.name + '`';
+      var prefix = 'Regarding ' + d.kind + ' `' + (d.display_name||d.name) + '`';
       if (d.file_path) prefix += ' in ' + d.file_path;
       prefix += ': ';
       input.value = prefix;
@@ -3857,7 +3856,7 @@ function buildSearchIndex() {
 
   allNodes.forEach(function(n) {
     var entry = {
-      id: n.id, name: n.name, kind: n.kind,
+      id: n.id, name: n.name, display_name: n.display_name || null, kind: n.kind,
       qualified_name: n.qualified_name || '',
       file_path: n.file_path || '',
       line_start: n.line_start, line_end: n.line_end,
@@ -3937,7 +3936,7 @@ function _renderSearchResults(query) {
     var filePart = r.file_path ? r.file_path.split('/').pop() : '';
     html += '<div class="search-result" data-index="' + i + '">' +
       '<span class="search-result-icon">' + icon + '</span>' +
-      '<span class="search-result-name">' + _highlightMatch(r.name, query) + '</span>' +
+      '<span class="search-result-name">' + _highlightMatch(r.display_name||r.name, query) + '</span>' +
       '<span class="search-result-kind">' + kindLabel + '</span>' +
       (filePart ? '<span class="search-result-file">' + _escHtml(filePart) + '</span>' : '') +
       '</div>';
@@ -5134,19 +5133,19 @@ function drillIntoNode(d) {
     if (!d.methods || d.methods.length === 0) { selectNode(d); return; }
     const sub = buildClassMethodGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    _setGraphView(sub, `Class: ${d.name}`);
+    _setGraphView(sub, `Class: ${d.display_name||d.name}`);
     return;
   }
   if (d.kind === "island_chain") {
     const sub = buildIslandChainGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    _setGraphView(sub, `Island Chain: ${d.name}`);
+    _setGraphView(sub, `Island Chain: ${d.display_name||d.name}`);
     return;
   }
   if (_GROUP_KINDS.has(d.kind)) {
     const sub = buildGroupGraph(d);
     graphStack.push({ graph: graphData, label: currentGraphLabel });
-    _setGraphView(sub, d.name);
+    _setGraphView(sub, d.display_name||d.name);
     return;
   }
   selectNode(d);
@@ -6112,7 +6111,7 @@ function renderGraph() {
     .attr("width", d => NODE_SIZE[d.kind]?.w || 160)
     .attr("height", d => NODE_SIZE[d.kind]?.h || 60);
 
-  node.append("text").attr("class","node-title").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+18).attr("text-anchor","start").text(d=>_contentIcon(d)+' '+d.name);
+  node.append("text").attr("class","node-title").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+18).attr("text-anchor","start").text(d=>_contentIcon(d)+' '+(d.display_name||d.name));
   node.append("text").attr("class","node-kind-inside").attr("x",d=>-(NODE_SIZE[d.kind]?.w||160)/2+10).attr("y",d=>-(NODE_SIZE[d.kind]?.h||60)/2+34).attr("text-anchor","start").text(d=>_nodeKindLabel(d));
 
   // Language icons (top-right corner)
@@ -6387,6 +6386,16 @@ function showNodeContextMenu(event, d) {
   event.stopPropagation();
   _ctxMenuNode = d;
 
+  // Stop any running auto-scroll animations so their scroll events
+  // cannot race with and close the context menu.
+  _autoScrollAnimations.forEach(function(anim) {
+    if (anim.raf) cancelAnimationFrame(anim.raf);
+    if (anim.timeout) clearTimeout(anim.timeout);
+    if (anim.stopTimeout) clearTimeout(anim.stopTimeout);
+    if (anim.kill) anim.kill();
+  });
+  _autoScrollAnimations.clear();
+
   var menu = document.getElementById("node-ctx-menu");
   var digItem = document.getElementById("ctx-dig-down");
   var codeItem = document.getElementById("ctx-view-code");
@@ -6442,7 +6451,6 @@ function hideNodeContextMenu() {
   var revealBtn = document.getElementById("ctx-reveal-file");
   var summaryBtn = document.getElementById("ctx-summary");
   var queryBtn = document.getElementById("ctx-query");
-  var walkthroughBtn = document.getElementById("ctx-walkthrough");
 
   digBtn.addEventListener("click", function(e) {
     e.stopPropagation();
@@ -6478,22 +6486,6 @@ function hideNodeContextMenu() {
     hideNodeContextMenu();
   });
 
-  walkthroughBtn.addEventListener("click", function(e) {
-    e.stopPropagation();
-    if (_ctxMenuNode) {
-      // Open the preview panel if not visible
-      if (typeof WM !== 'undefined' && WM.openPanel) {
-        WM.openPanel('preview');
-      }
-      // Reset any existing walkthrough and start focused on this node
-      _previewScenes = [];
-      _previewIndex = 0;
-      _previewPlaying = false;
-      setTimeout(function() { _previewStart(_ctxMenuNode.id); }, 200);
-    }
-    hideNodeContextMenu();
-  });
-
   summaryBtn.addEventListener("click", function(e) {
     e.stopPropagation();
     if (_ctxMenuNode) {
@@ -6512,12 +6504,14 @@ function hideNodeContextMenu() {
 })();
 
 // Close menu on any outside click, Escape, or scroll
-document.addEventListener("mousedown", function(e) {
+// Use capture phase so D3-zoom's stopImmediatePropagation on the SVG
+// cannot prevent this handler from firing.
+window.addEventListener("mousedown", function(e) {
   var menu = document.getElementById("node-ctx-menu");
-  if (menu && !menu.contains(e.target)) hideNodeContextMenu();
-});
+  if (menu && menu.classList.contains("open") && !menu.contains(e.target)) hideNodeContextMenu();
+}, true);
 document.addEventListener("keydown", function(e) { if (e.key === "Escape") hideNodeContextMenu(); });
-window.addEventListener("scroll", function() { hideNodeContextMenu(); }, true);
+window.addEventListener("scroll", function(e) { if (e.target === document || e.target === document.documentElement) hideNodeContextMenu(); }, true);
 
 // ── Node selection & detail panel ──────────────────────────────────
 
@@ -6548,10 +6542,10 @@ function _buildInspectorHtml(d) {
   const incoming = graphData.edges.filter(e => (_nid(e.target) === d.id));
   const outgoing = graphData.edges.filter(e => (_nid(e.source) === d.id));
   const findNode = function(id) { return graphData.nodes.find(n => n.id === _nid(id)); };
-  const findNodeName = function(id) { const n = findNode(id); return n ? n.name : _nid(id); };
+  const findNodeName = function(id) { const n = findNode(id); return n ? (n.display_name||n.name) : _nid(id); };
   const edgeColor = { inherits: "#d44a32", imports: "#5a6348", contains: "#3d4a2e", calls: "#e8a824", instantiates: "#b8a878", uses_type: "#6dbd4a" };
 
-  let html = `<h2>${_contentIcon(d)} ${d.name}</h2><div class="kind-tag ${d.kind}">${_nodeKindLabel(d)}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
+  let html = `<h2>${_contentIcon(d)} ${d.display_name||d.name}</h2><div class="kind-tag ${d.kind}">${_nodeKindLabel(d)}</div><div class="detail-section"><h3>Location</h3><div class="detail-row"><span>File:</span> ${d.file_path}</div><div class="detail-row"><span>Lines:</span> ${d.line_start}–${d.line_end}</div><div class="detail-row"><span>Qualified:</span> ${d.qualified_name}</div></div>`;
   if (d.docstring) { html += `<div class="detail-section"><h3>Description</h3><div class="docstring">${d.docstring}</div></div>`; }
   if (d.bases && d.bases.length > 0) { html += `<div class="detail-section"><h3>Inherits from</h3><div class="detail-row">${d.bases.join(", ")}</div></div>`; }
   if (d.variables && d.variables.length > 0) { html += `<div class="detail-section"><h3>Variables (${d.variables.length})</h3><ul class="methods-list">${d.variables.map(v => `<li>${v.name}<span class="var-type">: ${v.type}</span></li>`).join("")}</ul></div>`; }
@@ -6766,7 +6760,7 @@ function _descBarHtml(d, bodyHtml) {
   var contentIcon = _contentIcon(d);
   var m = NODE_KIND_META[d.kind];
   var kindLabel = m ? (m.icon + ' ' + m.label) : (d.kind || '').replace(/_/g, ' ');
-  return '<div class="desc-header"><span class="desc-node-name">' + contentIcon + ' ' + _escHtml(d.name) + '</span><span class="desc-kind">' + _escHtml(kindLabel) + '</span></div>' + bodyHtml;
+  return '<div class="desc-header"><span class="desc-node-name">' + contentIcon + ' ' + _escHtml(d.display_name||d.name) + '</span><span class="desc-kind">' + _escHtml(kindLabel) + '</span></div>' + bodyHtml;
 }
 
 function _showNodeDesc(d) {
@@ -6906,8 +6900,8 @@ function _showGraphOverviewDesc() {
   // Separate class-like nodes from methods for the members list
   var classLike = nodes.filter(function(n) { return n.kind !== 'method'; });
   var methods = nodes.filter(function(n) { return n.kind === 'method'; });
-  var memberNames = classLike.map(function(n) { return n.name; });
-  var methodNames = methods.map(function(n) { return n.name; });
+  var memberNames = classLike.map(function(n) { return n.display_name||n.name; });
+  var methodNames = methods.map(function(n) { return n.display_name||n.name; });
 
   // Build edge summary string
   var edgeKindCounts = {};

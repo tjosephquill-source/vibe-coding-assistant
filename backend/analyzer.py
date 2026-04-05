@@ -128,6 +128,7 @@ class Node:
     member_ids: list[str] = field(default_factory=list)   # for island chain drilldown
     bases: list[str] = field(default_factory=list)
     docstring: Optional[str] = None
+    display_name: Optional[str] = None                     # set when name is ambiguous
     depth: int = 0                                         # hierarchy depth level
 
 
@@ -1012,6 +1013,29 @@ class _JSRelationshipCollector:
         return "__module__"
 
 
+# ── Display-name disambiguation ─────────────────────────────────────
+
+def _disambiguate_display_names(graph: Graph) -> None:
+    """Set ``display_name`` on nodes whose ``name`` is shared by multiple nodes.
+
+    When two or more nodes have the same ``name`` (e.g. ``mainFunction`` in
+    both ``test.py`` and ``train.py``), each receives a ``display_name`` that
+    appends the source filename for clarity — e.g. ``mainFunction (test.py)``.
+
+    Nodes with unique names are left with ``display_name = None`` so the
+    frontend can fall back to ``name``.
+    """
+    from collections import Counter
+
+    name_counts = Counter(n.name for n in graph.nodes)
+    for n in graph.nodes:
+        if name_counts[n.name] > 1 and n.file_path:
+            stem = Path(n.file_path).name  # e.g. "test.py"
+            if not stem:
+                stem = Path(n.file_path).stem
+            n.display_name = f"{n.name}  ({stem})"
+
+
 # ── Analysis engine ─────────────────────────────────────────────────
 
 def _module_qname(file_path: str, root: str) -> str:
@@ -1222,6 +1246,9 @@ def analyze_codebase(root_dir: str) -> Graph:
                         kind=EdgeKind.IMPORTS,
                         label=f"imports {simple_name}",
                     ))
+
+    # ── Disambiguate duplicate node names ────────────────────────────
+    _disambiguate_display_names(graph)
 
     return graph
 
