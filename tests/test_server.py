@@ -37,6 +37,7 @@ def client():
     server._preview_cache.clear()
     server._tts_audio_cache.clear()
     server._enrich_cache.clear()
+    server._perf_cache.clear()
     return TestClient(app)
 
 
@@ -383,3 +384,134 @@ class TestChatModels:
             assert "id" in model
             assert "name" in model
 
+
+# ════════════════════════════════════════════════════════════════════
+# Performance analysis
+# ════════════════════════════════════════════════════════════════════
+
+
+class TestPerformanceEndpoint:
+
+    def test_no_api_key(self, client, project_dir):
+        """Returns 500 when OPENAI_API_KEY is not set."""
+        # Create project first
+        client.post("/api/projects", json={"name": "p", "path": project_dir})
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            resp = client.post("/api/node-performance", json={
+                "node_name": "App",
+                "node_kind": "class",
+                "file_path": "app.py",
+                "line_start": 1,
+                "line_end": 3,
+            })
+        assert resp.status_code == 500
+        assert "OPENAI_API_KEY" in resp.json()["error"]
+
+    def test_no_project(self, client):
+        """Returns error when no project is active."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            resp = client.post("/api/node-performance", json={
+                "node_name": "App",
+                "node_kind": "class",
+                "file_path": "app.py",
+                "line_start": 1,
+                "line_end": 3,
+            })
+        # 404 if no project path, or 400 if path exists but file not found
+        assert resp.status_code in (400, 404)
+        assert "error" in resp.json()
+
+    def test_no_source_code(self, client, project_dir):
+        """Returns 400 when no source snippet can be extracted."""
+        client.post("/api/projects", json={"name": "p", "path": project_dir})
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            resp = client.post("/api/node-performance", json={
+                "node_name": "Ghost",
+                "node_kind": "function",
+                "file_path": "nonexistent.py",
+                "line_start": 1,
+                "line_end": 5,
+            })
+        assert resp.status_code == 400
+        assert "No source code" in resp.json()["error"]
+
+    def test_success(self, client, project_dir):
+        """Returns structured analysis on success (mocked LLM)."""
+        client.post("/api/projects", json={"name": "p", "path": project_dir})
+
+        mock_analysis = json.dumps({
+            "time_complexity": "O(1) — constant time",
+            "space_complexity": "O(1) — no extra allocations",
+            "bottlenecks": [],
+            "recommendations": ["No issues found"],
+        })
+
+        class FakeMessage:
+            content = mock_analysis
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResp:
+            choices = [FakeChoice()]
+
+        async def fake_create(**kwargs):
+            return FakeResp()
+
+        class FakeCompletions:
+            create = staticmethod(fake_create)
+
+        class FakeChat:
+            completions = FakeCompletions()
+
+        class FakeClient:
+            chat = FakeChat()
+            def __init__(self, **kwargs):
+                pass
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            with patch("openai.AsyncOpenAI", FakeClient):
+                resp = client.post("/api/node-performance", json={
+                    "node_name": "App",
+                    "node_kind": "class",
+                    "file_path": "app.py",
+                    "line_start": 1,
+                    "line_end": 3,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "analysis" in data
+        assert data["analysis"]["time_complexity"] == "O(1) — constant time"
+        assert data["cached"] is False
+
+    def test_cached_response(self, client, project_dir):
+        """Second request for same content returns cached result."""
+        from backend import server
+        client.post("/api/projects", json={"name": "p", "path": project_dir})
+
+        # Pre-populate cache
+        import hashlib
+        source = "class App:\n    def run(self):\n        pass"
+        content_hash = hashlib.md5(source.encode()).hexdigest()[:16]
+        cache_key = f"perf|App|{content_hash}"
+        server._perf_cache[cache_key] = {
+            "time_complexity": "O(1)",
+            "space_complexity": "O(1)",
+            "bottlenecks": [],
+            "recommendations": [],
+        }
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            resp = client.post("/api/node-performance", json={
+                "node_name": "App",
+                "node_kind": "class",
+                "file_path": "app.py",
+                "line_start": 1,
+                "line_end": 3,
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cached"] is True
+        assert data["analysis"]["time_complexity"] == "O(1)"

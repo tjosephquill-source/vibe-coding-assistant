@@ -142,6 +142,7 @@ async def api_select_project(request: Request):
     # Clear in-memory caches so endpoints serve the new project
     _graph_cache.clear()
     _node_desc_cache.clear()
+    _perf_cache.clear()
     _preview_cache.clear()
     _tts_audio_cache.clear()
     _enrich_cache.clear()
@@ -341,6 +342,7 @@ def reanalyze():
     # Clear all in-memory caches
     _graph_cache.clear()
     _node_desc_cache.clear()
+    _perf_cache.clear()
     _preview_cache.clear()
     _tts_audio_cache.clear()
     _enrich_cache.clear()
@@ -652,6 +654,7 @@ async def save_layout(request: Request):
 # ── Node description endpoint (GPT-powered hover descriptions) ──────
 
 _node_desc_cache: dict[str, str] = {}  # content_hash → description
+_perf_cache: dict[str, dict] = {}      # content_hash → performance analysis
 
 
 @app.post("/api/node-description")
@@ -765,6 +768,113 @@ async def node_description(request: Request):
         description = resp.choices[0].message.content.strip()
         _node_desc_cache[cache_key] = description
         return {"description": description, "cached": False, "content_hash": content_hash}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ── Node performance analysis endpoint ──────────────────────────────
+
+_PERF_SYSTEM_PROMPT = (
+    "You are a senior performance engineer reviewing source code. "
+    "Analyse the given code and return a JSON object with exactly these keys:\n"
+    '  "time_complexity": a short string like "O(n²)" with a one-sentence explanation,\n'
+    '  "space_complexity": a short string like "O(n)" with a one-sentence explanation,\n'
+    '  "bottlenecks": an array of objects, each with "location" (line or description) '
+    'and "issue" (what the problem is). Empty array if none found,\n'
+    '  "recommendations": an array of short actionable strings. Empty array if none.\n\n'
+    "Be precise and specific — reference actual variable names, line patterns, "
+    "and data structures from the code. Do not hedge with 'might' or 'could'. "
+    "If the code is too short or trivial to analyse meaningfully, still fill every "
+    "field (use 'O(1)' and empty arrays as appropriate)."
+)
+
+
+@app.post("/api/node-performance")
+async def node_performance(request: Request):
+    """Analyse a node's source code for performance characteristics.
+
+    Body: {node_name, node_kind, file_path, line_start, line_end}
+
+    Returns structured performance analysis:
+    {
+        time_complexity, space_complexity,
+        bottlenecks: [{location, issue}],
+        recommendations: [str]
+    }
+    """
+    body = await request.json()
+    node_name = body.get("node_name", "")
+    node_kind = body.get("node_kind", "")
+    file_path = body.get("file_path", "")
+    line_start = body.get("line_start", 0)
+    line_end = body.get("line_end", 0)
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "OPENAI_API_KEY not set"}, status_code=500)
+
+    abs_root = _active_codebase_path()
+    if not abs_root:
+        return JSONResponse({"error": "No project selected"}, status_code=404)
+
+    # Read source snippet
+    snippet = ""
+    if file_path and line_start and line_end:
+        full = os.path.normpath(os.path.join(abs_root, file_path))
+        if os.path.isfile(full):
+            try:
+                lines = Path(full).read_text(encoding="utf-8", errors="replace").splitlines()
+                snippet = "\n".join(lines[max(0, line_start - 1):line_end])
+                if len(snippet) > 6000:
+                    snippet = snippet[:6000] + "\n… [truncated]"
+            except OSError:
+                pass
+
+    if not snippet:
+        return JSONResponse(
+            {"error": "No source code available for this node."},
+            status_code=400,
+        )
+
+    # Cache key from content hash
+    content_hash = hashlib.md5(snippet.encode()).hexdigest()[:16]
+    cache_key = f"perf|{node_name}|{content_hash}"
+
+    if cache_key in _perf_cache:
+        return {"analysis": _perf_cache[cache_key], "cached": True}
+
+    user_msg = (
+        f"Analyse the performance of this {node_kind} named '{node_name}':\n\n"
+        f"```\n{snippet}\n```"
+    )
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key)
+
+    try:
+        resp = await client.chat.completions.create(
+            model=_llm_model(),
+            messages=[
+                {"role": "system", "content": _PERF_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.2,
+            max_completion_tokens=800,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content.strip()
+        analysis = json.loads(raw)
+
+        # Ensure expected keys exist
+        analysis.setdefault("time_complexity", "Unknown")
+        analysis.setdefault("space_complexity", "Unknown")
+        analysis.setdefault("bottlenecks", [])
+        analysis.setdefault("recommendations", [])
+
+        _perf_cache[cache_key] = analysis
+        return {"analysis": analysis, "cached": False}
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "LLM returned invalid JSON"}, status_code=500)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

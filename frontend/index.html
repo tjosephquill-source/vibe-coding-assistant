@@ -1111,6 +1111,89 @@
   #project-select:hover { border-color:var(--accent-dim); }
   #project-select:focus { outline:none; border-color:var(--accent); }
 
+  /* ── Performance analysis overlay ─────────────────────────── */
+  #perf-overlay {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.65);
+    z-index:20000; align-items:center; justify-content:center;
+  }
+  #perf-overlay.open { display:flex; }
+  .perf-box {
+    background:var(--surface); border:1px solid var(--border-hi);
+    padding:24px 28px; min-width:420px; max-width:540px; width:90vw;
+    clip-path:var(--clip); box-shadow:0 12px 40px rgba(0,0,0,.7);
+    max-height:80vh; overflow-y:auto;
+  }
+  .perf-title {
+    font-size:16px; font-weight:700; text-transform:uppercase;
+    letter-spacing:2px; color:var(--accent); margin-bottom:6px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .perf-subtitle {
+    font-size:12px; color:var(--text-muted); margin-bottom:18px;
+    font-family:'Share Tech Mono',monospace; letter-spacing:.5px;
+  }
+  .perf-section {
+    margin-bottom:16px;
+  }
+  .perf-section-label {
+    font-size:11px; text-transform:uppercase; letter-spacing:1.5px;
+    color:var(--text-muted); font-weight:700; margin-bottom:6px;
+  }
+  .perf-complexity {
+    display:flex; gap:12px; margin-bottom:16px;
+  }
+  .perf-complexity-card {
+    flex:1; background:var(--bg); border:1px solid var(--border);
+    padding:12px 14px; clip-path:var(--clip-sm);
+  }
+  .perf-complexity-card .perf-big {
+    font-size:20px; font-weight:700; color:var(--accent);
+    font-family:'Share Tech Mono',monospace;
+  }
+  .perf-complexity-card .perf-explain {
+    font-size:11px; color:var(--text-muted); margin-top:4px; line-height:1.4;
+  }
+  .perf-list {
+    list-style:none; padding:0; margin:0;
+  }
+  .perf-list li {
+    position:relative; padding:6px 10px 6px 20px;
+    font-size:12px; color:var(--text); line-height:1.4;
+    border-left:2px solid var(--border);
+    margin-bottom:4px;
+  }
+  .perf-list li::before {
+    content:'▸'; position:absolute; left:6px; color:var(--accent-dim);
+  }
+  .perf-list .perf-loc {
+    color:var(--cyan); font-family:'Share Tech Mono',monospace;
+    font-size:11px; display:block; margin-bottom:2px;
+  }
+  .perf-list .perf-issue {
+    color:var(--text);
+  }
+  .perf-close {
+    position:absolute; top:12px; right:16px; background:none; border:none;
+    color:var(--text-muted); font-size:18px; cursor:pointer; line-height:1;
+    transition:color .15s;
+  }
+  .perf-close:hover { color:var(--accent); }
+  .perf-loading {
+    text-align:center; padding:40px 20px; color:var(--text-muted);
+    font-size:13px; letter-spacing:1px;
+  }
+  .perf-loading .perf-spinner {
+    display:inline-block; width:20px; height:20px;
+    border:2px solid var(--border-hi); border-top-color:var(--accent);
+    border-radius:50%; animation:perf-spin .8s linear infinite;
+    margin-bottom:12px;
+  }
+  @keyframes perf-spin { to { transform:rotate(360deg); } }
+  .perf-error {
+    color:var(--red); font-size:12px; text-align:center; padding:20px;
+    font-weight:600; letter-spacing:.5px;
+  }
+
   /* ── New-project modal ────────────────────────────────────── */
   .modal-overlay {
     display:none; position:fixed; inset:0; background:rgba(0,0,0,.65);
@@ -1405,9 +1488,17 @@
   <div class="ctx-sep"></div>
   <div class="ctx-item" id="ctx-summary"><span class="ctx-icon">🤖</span>Summary</div>
   <div class="ctx-item" id="ctx-query"><span class="ctx-icon">💬</span>Query</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-performance"><span class="ctx-icon">⚡</span>Performance</div>
 </div>
 
-
+<!-- Performance analysis overlay -->
+<div id="perf-overlay">
+  <div class="perf-box" style="position:relative;">
+    <button class="perf-close" id="perf-close-btn">&times;</button>
+    <div id="perf-content"></div>
+  </div>
+</div>
 
 <script>
 // ================================================================
@@ -3793,6 +3884,146 @@ function chatQueryNode(d) {
 
 // Holds pending node context for the next query send
 var _chatQueryNodeContext = null;
+
+// ================================================================
+// PERFORMANCE ANALYSIS
+// ================================================================
+
+var _perfAbort = null;
+
+function _showPerfOverlay() {
+  var ov = document.getElementById('perf-overlay');
+  if (ov) ov.classList.add('open');
+}
+
+function _hidePerfOverlay() {
+  var ov = document.getElementById('perf-overlay');
+  if (ov) ov.classList.remove('open');
+  if (_perfAbort) { _perfAbort.abort(); _perfAbort = null; }
+}
+
+// Close overlay on click outside the box, Escape, or close button
+(function() {
+  var ov = document.getElementById('perf-overlay');
+  if (ov) {
+    ov.addEventListener('mousedown', function(e) {
+      if (e.target === ov) _hidePerfOverlay();
+    });
+  }
+  var closeBtn = document.getElementById('perf-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', _hidePerfOverlay);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && ov && ov.classList.contains('open')) {
+      _hidePerfOverlay();
+    }
+  });
+})();
+
+function _renderPerfResults(d, analysis) {
+  var h = '';
+  h += '<div class="perf-title">⚡ Performance Analysis</div>';
+  h += '<div class="perf-subtitle">' + _escHtml(d.display_name || d.name) + ' &mdash; ' + _escHtml(d.kind) + '</div>';
+
+  // Complexity cards
+  var timeParts = _splitComplexity(analysis.time_complexity || 'Unknown');
+  var spaceParts = _splitComplexity(analysis.space_complexity || 'Unknown');
+
+  h += '<div class="perf-complexity">';
+  h += '<div class="perf-complexity-card"><div class="perf-section-label">Time</div>';
+  h += '<div class="perf-big">' + _escHtml(timeParts.big) + '</div>';
+  if (timeParts.explain) h += '<div class="perf-explain">' + _escHtml(timeParts.explain) + '</div>';
+  h += '</div>';
+  h += '<div class="perf-complexity-card"><div class="perf-section-label">Space</div>';
+  h += '<div class="perf-big">' + _escHtml(spaceParts.big) + '</div>';
+  if (spaceParts.explain) h += '<div class="perf-explain">' + _escHtml(spaceParts.explain) + '</div>';
+  h += '</div>';
+  h += '</div>';
+
+  // Bottlenecks
+  var bottlenecks = analysis.bottlenecks || [];
+  if (bottlenecks.length > 0) {
+    h += '<div class="perf-section"><div class="perf-section-label">⚠ Bottlenecks</div><ul class="perf-list">';
+    bottlenecks.forEach(function(b) {
+      h += '<li>';
+      if (b.location) h += '<span class="perf-loc">' + _escHtml(b.location) + '</span>';
+      h += '<span class="perf-issue">' + _escHtml(b.issue || '') + '</span>';
+      h += '</li>';
+    });
+    h += '</ul></div>';
+  }
+
+  // Recommendations
+  var recs = analysis.recommendations || [];
+  if (recs.length > 0) {
+    h += '<div class="perf-section"><div class="perf-section-label">✦ Recommendations</div><ul class="perf-list">';
+    recs.forEach(function(r) {
+      h += '<li><span class="perf-issue">' + _escHtml(typeof r === 'string' ? r : (r.text || JSON.stringify(r))) + '</span></li>';
+    });
+    h += '</ul></div>';
+  }
+
+  return h;
+}
+
+/**
+ * Split a complexity string like "O(n²) — linear scan of all items"
+ * into { big: "O(n²)", explain: "linear scan of all items" }.
+ */
+function _splitComplexity(s) {
+  if (!s) return { big: 'Unknown', explain: '' };
+  // Try to split on common separators
+  var m = s.match(/^(O\([^)]*\))\s*[-–—:,]\s*(.+)$/i);
+  if (m) return { big: m[1], explain: m[2] };
+  // If the whole thing looks like an O(...) notation, use it as big
+  if (/^O\(/i.test(s)) return { big: s, explain: '' };
+  // Otherwise treat as explanation with unknown complexity
+  return { big: s, explain: '' };
+}
+
+/**
+ * Fetch performance analysis for a node from the backend LLM endpoint
+ * and display results in the performance overlay.
+ */
+function fetchNodePerformance(d) {
+  var content = document.getElementById('perf-content');
+  if (!content) return;
+
+  // Show loading state
+  content.innerHTML = '<div class="perf-loading"><div class="perf-spinner"></div><br>Analysing performance of <strong>' + _escHtml(d.display_name || d.name) + '</strong>…</div>';
+  _showPerfOverlay();
+
+  // Abort any previous request
+  if (_perfAbort) { _perfAbort.abort(); _perfAbort = null; }
+  var controller = new AbortController();
+  _perfAbort = controller;
+
+  var body = {
+    node_name: d.name,
+    node_kind: d.kind,
+    file_path: d.file_path || '',
+    line_start: d.line_start || 0,
+    line_end: d.line_end || 0,
+  };
+
+  fetch(API_BASE + '/api/node-performance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        content.innerHTML = '<div class="perf-title">⚡ Performance Analysis</div><div class="perf-error">' + _escHtml(data.error) + '</div>';
+        return;
+      }
+      content.innerHTML = _renderPerfResults(d, data.analysis || {});
+    })
+    .catch(function(err) {
+      if (err.name === 'AbortError') return;
+      content.innerHTML = '<div class="perf-title">⚡ Performance Analysis</div><div class="perf-error">Request failed: ' + _escHtml(err.message || 'Unknown error') + '</div>';
+    });
+}
 
 // ================================================================
 // TRIE-BASED PREDICTIVE SEARCH
@@ -6400,6 +6631,7 @@ function showNodeContextMenu(event, d) {
   var digItem = document.getElementById("ctx-dig-down");
   var codeItem = document.getElementById("ctx-view-code");
   var revealItem = document.getElementById("ctx-reveal-file");
+  var perfItem = document.getElementById("ctx-performance");
 
   // Enable / disable "Dig Down"
   if (_canDrill(d)) {
@@ -6420,6 +6652,13 @@ function showNodeContextMenu(event, d) {
     revealItem.classList.remove("disabled");
   } else {
     revealItem.classList.add("disabled");
+  }
+
+  // Enable / disable "Performance" — need source code (same as View Code)
+  if (_hasSourceFile(d)) {
+    perfItem.classList.remove("disabled");
+  } else {
+    perfItem.classList.add("disabled");
   }
 
   // Position near cursor but keep on-screen
@@ -6451,6 +6690,7 @@ function hideNodeContextMenu() {
   var revealBtn = document.getElementById("ctx-reveal-file");
   var summaryBtn = document.getElementById("ctx-summary");
   var queryBtn = document.getElementById("ctx-query");
+  var perfBtn = document.getElementById("ctx-performance");
 
   digBtn.addEventListener("click", function(e) {
     e.stopPropagation();
@@ -6498,6 +6738,14 @@ function hideNodeContextMenu() {
     e.stopPropagation();
     if (_ctxMenuNode) {
       chatQueryNode(_ctxMenuNode);
+    }
+    hideNodeContextMenu();
+  });
+
+  perfBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (_ctxMenuNode && _hasSourceFile(_ctxMenuNode)) {
+      fetchNodePerformance(_ctxMenuNode);
     }
     hideNodeContextMenu();
   });
