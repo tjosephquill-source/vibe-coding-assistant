@@ -303,6 +303,17 @@
     white-space:normal; word-wrap:break-word;
     font-size:1em;
   }
+  #node-desc-bar .desc-slide-title {
+    color:var(--tan); font-weight:700;
+    font-size:1.2em; line-height:1.2;
+    margin-bottom:0.15em;
+    text-transform:uppercase; letter-spacing:.5px;
+  }
+  #node-desc-bar .desc-slide-body {
+    color:#b8a878;
+    white-space:normal; word-wrap:break-word;
+    font-size:1em;
+  }
   #node-desc-bar .desc-loading {
     color:var(--text-muted); font-style:italic;
   }
@@ -2583,6 +2594,28 @@ PanelRegistry.register({
 });
 
 /* ── Helper: push text into the Node Description bar ────────────── */
+
+/**
+ * Parse a walkthrough narration into {title, body}.
+ * Handles formats like:
+ *   "Slide 1: Executive Overview - body text..."
+ *   "Executive Overview - body text..."
+ *   "Slide 5: Performance Profile — body text..."
+ */
+function _parseSlideNarration(text) {
+  if (!text) return { title: '', body: text || '' };
+  // Strip "Slide N: " prefix if present
+  var stripped = text.replace(/^Slide\s+\d+\s*:\s*/i, '');
+  // Split on " - " or " — " (the heading/body separator)
+  var dashIdx = stripped.search(/\s[-–—]\s/);
+  if (dashIdx > 0 && dashIdx < 60) {
+    var title = stripped.substring(0, dashIdx).trim();
+    var body = stripped.substring(dashIdx).replace(/^\s*[-–—]\s*/, '').trim();
+    return { title: title, body: body };
+  }
+  return { title: '', body: stripped };
+}
+
 function _previewShowNarration(text, isLoading) {
   var bar = document.getElementById('node-desc-bar');
   if (!bar) return;
@@ -2590,7 +2623,13 @@ function _previewShowNarration(text, isLoading) {
   if (isLoading) {
     bar.innerHTML = '<span class="desc-text desc-loading">' + _escHtml(text) + '</span>';
   } else {
-    bar.innerHTML = '<span class="desc-text">' + _escHtml(text) + '</span>';
+    var parsed = _parseSlideNarration(text);
+    if (parsed.title) {
+      bar.innerHTML = '<div class="desc-slide-title">' + _escHtml(parsed.title) + '</div>' +
+                      '<span class="desc-slide-body">' + _escHtml(parsed.body) + '</span>';
+    } else {
+      bar.innerHTML = '<span class="desc-text">' + _escHtml(text) + '</span>';
+    }
   }
   _fitNodeDescFontSize();
 }
@@ -2599,9 +2638,17 @@ function _previewShowNarrationTypewriter(text) {
   var bar = document.getElementById('node-desc-bar');
   if (!bar) return;
   bar.className = '';
-  bar.innerHTML = '<span class="desc-text" id="preview-typewriter"></span>';
-  _fitNodeDescFontSize();
-  _previewTypewriter(document.getElementById('preview-typewriter'), text);
+  var parsed = _parseSlideNarration(text);
+  if (parsed.title) {
+    bar.innerHTML = '<div class="desc-slide-title">' + _escHtml(parsed.title) + '</div>' +
+                    '<span class="desc-slide-body" id="preview-typewriter"></span>';
+    _fitNodeDescFontSize();
+    _previewTypewriter(document.getElementById('preview-typewriter'), parsed.body);
+  } else {
+    bar.innerHTML = '<span class="desc-text" id="preview-typewriter"></span>';
+    _fitNodeDescFontSize();
+    _previewTypewriter(document.getElementById('preview-typewriter'), text);
+  }
 }
 
 function _previewUpdateCounter() {

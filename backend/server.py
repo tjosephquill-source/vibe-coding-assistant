@@ -569,7 +569,7 @@ def fs_checksum():
     """
     abs_path = _active_codebase_path()
     if not abs_path:
-        return JSONResponse({"error": "No project selected."}, status_code=404)
+        return {"checksum": None, "file_count": 0}
 
     entries: list[str] = []
     try:
@@ -1113,23 +1113,14 @@ Scene schema:
 - focus_node_ids must exist in VISIBLE GRAPH NODES
 - duration_hint in seconds (5-10 per scene)"""
 
-    # ── Static UI terminology (always valid — describes the visualisation tool) ──
+    # ── Brief UI terminology reference (secondary to content) ──
     _tool_ui_terms = """\
-You are narrating inside an interactive architecture-graph visualisation tool. Use these UI terms — they are what the user sees on screen:
-- "node" = a box on the graph representing a class, method, or group of related classes
-- "edge" = a line connecting two nodes showing a relationship (calls, inherits, imports, instantiates, uses_type)
-- "graph" = the interactive architecture visualisation the user is looking at right now
-- "drill down" / "dig down" = double-clicking a node to zoom into its internal structure (methods, sub-classes)
-- "island chain" = a cluster of related classes grouped together by shared relationships
-- "abstract view" = the high-level grouped view showing island chains and groups
-- "full view" = the detailed view showing every individual class
-- "walkthrough" = the animated narrated tour you are generating right now
-- "insights" = detected architectural patterns and anti-patterns (circular dependencies, god classes, orphan modules)
-- "node description" = the AI-generated description shown when hovering over a node
-- "breadcrumb" = the navigation trail showing the current drill-down path (e.g. Overview > Services > UserService)
-- "edges" have kinds: "calls" (method invocation), "inherits" (class inheritance), "imports" (module import), "contains" (parent→child), "instantiates" (object creation), "uses_type" (type reference)
-
-Use these terms naturally in your narration. The user is looking at this graph UI while listening."""
+The user is viewing an interactive architecture graph while listening to your narration.
+UI terms you may use sparingly when referring to navigation:
+- "node" = a box representing a class, method, or module group
+- "edge" = a connecting line showing a relationship (calls, inherits, imports, etc.)
+- "drill down" = double-clicking a node to see its internals
+You may occasionally reference the graph (e.g. "you can see X on the graph"), but your PRIMARY job is to explain the CODE ITSELF, not the visualisation."""
 
     # ── Dynamic glossary built from the analysed codebase's own descriptions ──
     def _build_target_app_glossary(descs: dict) -> str:
@@ -1169,33 +1160,78 @@ Use these terms naturally in your narration. The user is looking at this graph U
 
     _target_glossary = _build_target_app_glossary(hier_descs)
 
-    scene_count = "4-6"
-    system_msg = f"""You are narrating a high-level product overview of a software system displayed as an interactive architecture graph. Your audience has never seen this codebase. Explain what this software IS and what it DOES — like a senior engineer explaining the product to a new team member while pointing at the graph on screen.
+    scene_count = "10"
+
+    _slide_structure = """\
+Produce exactly 10 scenes (slides), in this fixed order. Each narration starts with the topic name followed by a dash.
+
+1. Executive Overview — Name the technology, explain its key mechanism, say what it produces. No class/method names.
+2. System Context and Boundaries — What goes in, what comes out, what it depends on externally.
+3. Core Architecture and Subsystems — How the code is organized, what each piece handles.
+4. Runtime / Data Flow — Walk through a typical use from start to finish, step by step.
+5. Performance Profile — Where time/resources are spent, what that means practically.
+6. Bottlenecks and Failure Modes — What will break or slow down, under what conditions.
+7. Dependency and Coupling Risks — Is the code well-organized or tangled? What's hard to change?
+8. Security and Reliability — How does it handle bad input, edge cases, adversarial use?
+9. Observability and Operability — How easy is it to debug and monitor?
+10. Prioritized Improvements — 3-5 concrete recommendations, each tied to a finding above."""
+
+    system_msg = f"""You are explaining a software codebase to someone who has never seen it. Help them understand what it does, how it's built, and where the problems are.
+
+Match the tone and detail level of these examples EXACTLY.
+
+── EXAMPLE WALKTHROUGH A: Clustering Algorithm ──
+Executive Overview - This is a KNN clustering implementation — an unsupervised machine learning technique that partitions a dataset into K groups based on nearest-neighbor connectivity, where K is chosen by the user. The output can be visualized to reveal latent structure and natural groupings that aren't obvious from the raw data.
+System Context and Boundaries - It takes in a numeric dataset and a value for K, and outputs a cluster label for each data point. The only external dependency is NumPy for matrix operations.
+Core Architecture and Subsystems - The code is organized as a four-stage pipeline: first compute pairwise distances, then build a K-nearest-neighbor graph, then extract connected components from that graph, and finally assign cluster labels based on component membership.
+Runtime / Data Flow - You pass in your data and call fit. It computes a full distance matrix between all points, selects the K nearest neighbors for each point to build an adjacency graph, walks that graph to find connected components, then assigns each component a cluster ID — or marks it as noise if the component is too small.
+Performance Profile - Almost all the runtime is in the distance matrix computation, which is O(n²) — doubling the number of data points quadruples the time. The graph construction and component extraction are comparatively cheap.
+Bottlenecks and Failure Modes - The full distance matrix is stored in memory, so large datasets will cause out-of-memory crashes. There is no chunked or approximate mode. Passing malformed input produces unhelpful errors deep in NumPy rather than a clear validation message.
+Dependency and Coupling Risks - Everything is in a single class with a linear call chain, so it's easy to follow but impossible to swap out one stage independently — for example, you can't plug in a different distance metric without modifying the core pipeline.
+Security and Reliability - There is no input validation. Wrong data types, empty arrays, or negative K values will produce cryptic exceptions rather than helpful error messages.
+Observability and Operability - There is no logging or progress reporting. If clustering produces unexpected results, you have no way to inspect intermediate stages without adding your own debug code.
+Prioritized Improvements - First, add input validation with clear error messages for common mistakes. Second, support pluggable distance metrics so users can customize the algorithm. Third, add an approximate nearest-neighbor option to handle larger datasets without running out of memory.
+
+── EXAMPLE WALKTHROUGH B: Web Application Backend ──
+Executive Overview - This is a FastAPI REST backend for an online bookstore. It handles user accounts, book catalog management, shopping cart operations, and order processing, all backed by a PostgreSQL database.
+System Context and Boundaries - The frontend communicates over REST endpoints. The backend reads and writes to PostgreSQL, sends order confirmation emails via SendGrid, and processes payments through Stripe's API.
+Core Architecture and Subsystems - There are four main modules: auth handles registration and JWT-based login, catalog manages the book inventory and search, cart tracks per-user shopping sessions, and orders orchestrates checkout, payment, and email confirmation.
+Runtime / Data Flow - A typical purchase flow: the user searches the catalog, adds books to their cart, then hits checkout. The orders module validates the cart, calls Stripe to charge the card, writes the order to the database, and fires off a confirmation email through SendGrid.
+Performance Profile - Catalog search hits the database on every request with no caching layer. For a small catalog this is fine, but with thousands of books and concurrent users it will become the bottleneck.
+Bottlenecks and Failure Modes - If Stripe is slow or down, the checkout endpoint blocks with no timeout — the user gets a hanging request. There is no retry logic for the SendGrid email call, so confirmation emails can silently fail.
+Dependency and Coupling Risks - The orders module directly calls into auth, catalog, and cart, making it a central coupling point. Changing the cart's data format would require coordinated changes in orders too.
+Security and Reliability - JWT tokens have no expiry configured, so stolen tokens work forever. User-supplied search queries are passed to a raw SQL query without parameterization, creating a SQL injection risk.
+Observability and Operability - There is basic request logging via FastAPI's middleware, but no structured logging, no metrics, and no health check endpoint. Diagnosing a failed order requires reading raw logs.
+Prioritized Improvements - First, parameterize the catalog search query to close the SQL injection vulnerability. Second, add a timeout and retry to the Stripe and SendGrid calls. Third, add JWT token expiry. Fourth, add a caching layer in front of catalog search.
+
+── END OF EXAMPLES ──
+
+Write your walkthrough in the same style as the examples above. Match their tone, specificity, and sentence length.
 
 {_tool_ui_terms}
 
 ── ABOUT THE ANALYSED SOFTWARE ──
 {_target_glossary}
 
-You will be given DESCRIPTIONS of components. READ them, UNDERSTAND the purpose they serve, and SYNTHESIZE a clear explanation of the software's purpose and capabilities.
+You will be given DESCRIPTIONS of each component. These are your raw material. Figure out WHAT this software is, then write each slide following the pattern from the examples.
 
-Use the graph UI terminology (nodes, edges, graphs, drill down, etc.) when describing how to explore the codebase. But do NOT name internal Python/JS class names or method names at this level — refer to capabilities and subsystems instead.
+── SLIDE STRUCTURE (MANDATORY) ──
+{_slide_structure}
 
 {_scene_schema}
 
 Rules:
 {_shared_rules}
-- Generate {scene_count} scenes
+- Generate exactly {scene_count} scenes, one per slide, in the order above
 - {walkthrough_scope}
-- Opening scene: "zoom_out_all" — one clear sentence stating what the software is and does, referencing the graph the user is seeing
-- Subsequent scenes: walk through the major CAPABILITIES — what can it do? Point out the relevant nodes/groups on the graph as you explain
-- Final scene: "zoom_out_all" — summarize and mention how the user can drill down into any node to explore further
-- Tone: clear, confident, professional. Every sentence must convey information.
-- Refer to what the user can SEE on the graph — "this node represents...", "the edges between these nodes show...", "you can drill down into this group to see..."
-- Do NOT just list component names — explain what each area DOES and how they connect"""
+- Each scene's narration MUST start with the slide topic name (e.g. "Executive Overview - ..."), NOT "Slide 1: ..."
+- Scene 1 camera MUST be "zoom_out_all"; Scene 10 camera MUST be "zoom_out_all"
+- For scenes 2-9, choose the most appropriate camera action
+- Match the tone and length of the examples above — typically 1-3 sentences per slide
+- If information for a slide topic is genuinely not available, say "Not enough information to assess this" and move on"""
 
     user_msg = (
-        f"Generate a high-level architecture walkthrough.\n\n"
+        f"Generate the 10-slide structured architecture walkthrough.\n\n"
         f"── DESCRIPTIONS (ground truth) ──\n{descriptions_context}\n\n"
         f"── VISIBLE GRAPH NODES (for camera focus) ──\n{graph_ref}"
     )
@@ -1211,7 +1247,7 @@ Rules:
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.4,
-            max_completion_tokens=4000,
+            max_completion_tokens=8000,
             response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content.strip()
