@@ -2666,13 +2666,56 @@ function _wrapWordsInSpans(text) {
   return text.replace(/(\S+)/g, '<span class="wh">$1</span>');
 }
 
-/* ── Word-highlight animation engine ─────────────────────────────── */
+/* ── Word-highlight animation engine (weighted word timing) ──────── */
 
 var _highlightRAF = null;
 var _highlightStartTime = 0;
 var _highlightDuration = 0;
-var _highlightPausedAt = 0;   // elapsed ms when paused (0 = not paused)
-var _highlightWords = null;   // NodeList of .wh spans
+var _highlightPausedAt = 0;      // elapsed ms when paused (0 = not paused)
+var _highlightWords = null;      // NodeList of .wh spans
+var _highlightAudioEl = null;    // reference to audio element for sync
+var _highlightCumWeights = null; // cumulative weight thresholds [0..1] per word
+
+/**
+ * Estimate the relative speaking duration of a word.
+ * Longer words take longer; punctuation at the end adds a pause.
+ */
+function _wordWeight(text) {
+  // Strip HTML entities and tags
+  var clean = text.replace(/&\w+;/g, ' ').replace(/<[^>]*>/g, '');
+  // Base weight: character count (min 1)
+  var w = Math.max(1, clean.length);
+  // Punctuation pause: period, question, exclamation, semicolon, colon get a big pause
+  if (/[.!?;:]$/.test(clean))  w += 5;
+  // Comma and dash get a smaller pause
+  else if (/[,\u2014\u2013\-]$/.test(clean)) w += 2;
+  return w;
+}
+
+/**
+ * Build cumulative weight thresholds for a list of word spans.
+ * Returns an array where cumWeights[i] is the normalized [0..1] time
+ * at which word i should FINISH being spoken.
+ */
+function _buildCumWeights(wordSpans) {
+  var n = wordSpans.length;
+  if (n === 0) return [];
+  var weights = [];
+  var total = 0;
+  for (var i = 0; i < n; i++) {
+    var w = _wordWeight(wordSpans[i].textContent || '');
+    weights.push(w);
+    total += w;
+  }
+  // Build cumulative thresholds normalized to [0..1]
+  var cum = [];
+  var running = 0;
+  for (var j = 0; j < n; j++) {
+    running += weights[j];
+    cum.push(running / total);
+  }
+  return cum;
+}
 
 function _previewStartHighlight(durationMs) {
   _previewStopHighlight();
@@ -2684,16 +2727,47 @@ function _previewStartHighlight(durationMs) {
   _highlightDuration = durationMs;
   _highlightStartTime = Date.now();
   _highlightPausedAt = 0;
+  // Build weighted timeline
+  _highlightCumWeights = _buildCumWeights(_highlightWords);
+  // If audio is currently playing, use it for sync
+  _highlightAudioEl = (_previewAudioEl && _previewAudioEl.duration && isFinite(_previewAudioEl.duration))
+    ? _previewAudioEl : null;
   _highlightTick();
 }
 
 function _highlightTick() {
   if (!_highlightWords || _highlightWords.length === 0) return;
-  var elapsed = _highlightPausedAt > 0 ? _highlightPausedAt : (Date.now() - _highlightStartTime);
-  var progress = Math.min(1, elapsed / _highlightDuration);
+
+  var progress;
+  if (_highlightPausedAt > 0) {
+    // Paused — use frozen elapsed time
+    progress = Math.min(1, _highlightPausedAt / _highlightDuration);
+  } else if (_highlightAudioEl && _highlightAudioEl.duration && isFinite(_highlightAudioEl.duration)) {
+    // Audio-driven: sync highlight to actual speech position
+    progress = Math.min(1, _highlightAudioEl.currentTime / _highlightAudioEl.duration);
+  } else {
+    // Timer-driven fallback (muted mode)
+    var elapsed = Date.now() - _highlightStartTime;
+    progress = Math.min(1, elapsed / _highlightDuration);
+  }
+
   var totalWords = _highlightWords.length;
-  // Current word index — we add 0.5 so the last word finishes before time is fully up
-  var currentIdx = Math.floor(progress * (totalWords + 0.5));
+  var cum = _highlightCumWeights;
+
+  // Find the current word index using weighted thresholds:
+  // word i is "active" when progress is between cum[i-1] and cum[i]
+  var currentIdx = totalWords; // past the end by default
+  if (cum && cum.length === totalWords) {
+    for (var k = 0; k < totalWords; k++) {
+      if (progress < cum[k]) {
+        currentIdx = k;
+        break;
+      }
+    }
+  } else {
+    // Fallback to uniform if weights unavailable
+    currentIdx = Math.floor(progress * (totalWords + 0.5));
+  }
 
   for (var i = 0; i < totalWords; i++) {
     var span = _highlightWords[i];
@@ -2716,12 +2790,18 @@ function _highlightTick() {
 function _previewPauseHighlight() {
   if (_highlightRAF) { cancelAnimationFrame(_highlightRAF); _highlightRAF = null; }
   if (_highlightStartTime > 0 && _highlightPausedAt === 0) {
-    _highlightPausedAt = Date.now() - _highlightStartTime;
+    if (_highlightAudioEl && _highlightAudioEl.duration && isFinite(_highlightAudioEl.duration)) {
+      _highlightPausedAt = _highlightAudioEl.currentTime / _highlightAudioEl.duration * _highlightDuration;
+    } else {
+      _highlightPausedAt = Date.now() - _highlightStartTime;
+    }
   }
 }
 
 function _previewResumeHighlight() {
   if (_highlightPausedAt > 0 && _highlightWords && _highlightWords.length > 0) {
+    _highlightAudioEl = (_previewAudioEl && _previewAudioEl.duration && isFinite(_previewAudioEl.duration))
+      ? _previewAudioEl : null;
     _highlightStartTime = Date.now() - _highlightPausedAt;
     _highlightPausedAt = 0;
     _highlightTick();
@@ -2734,6 +2814,8 @@ function _previewStopHighlight() {
   _highlightStartTime = 0;
   _highlightDuration = 0;
   _highlightPausedAt = 0;
+  _highlightAudioEl = null;
+  _highlightCumWeights = null;
   var bodyEl = document.querySelector('#node-desc-bar .desc-slide-body');
   if (bodyEl) bodyEl.classList.remove('highlighting');
 }
@@ -3357,8 +3439,15 @@ function _previewAnimateProgress(duration) {
 
   function tick() {
     if (!_previewPlaying) return;
-    var elapsed = Date.now() - _previewSceneStart;
-    var slideProgress = Math.min(1, elapsed / duration) * 100;
+    var slideProgress;
+    if (_previewAudioEl && _previewAudioEl.duration && isFinite(_previewAudioEl.duration)) {
+      // Audio-driven: sync to actual playback position
+      slideProgress = Math.min(1, _previewAudioEl.currentTime / _previewAudioEl.duration) * 100;
+    } else {
+      // Timer-driven fallback (muted or no audio)
+      var elapsed = Date.now() - _previewSceneStart;
+      slideProgress = Math.min(1, elapsed / duration) * 100;
+    }
     progressFill.style.width = slideProgress + '%';
     if (slideProgress < 100) {
       _previewProgressRAF = requestAnimationFrame(tick);
