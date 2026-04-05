@@ -1213,7 +1213,16 @@ Write your walkthrough in the same style as the examples above. Match their tone
 ── ABOUT THE ANALYSED SOFTWARE ──
 {_target_glossary}
 
-You will be given DESCRIPTIONS of each component. These are your raw material. Figure out WHAT this software is, then write each slide following the pattern from the examples.
+You will be given DESCRIPTIONS of each component. These are auto-generated technical notes — they describe implementation details using code-level language. DO NOT paraphrase or echo them. Instead:
+1. Read the descriptions to understand what the software does.
+2. Identify the well-known technology, algorithm, framework, or product category it implements.
+3. Explain it in YOUR OWN WORDS at a conceptual level, matching the tone of the examples above.
+
+── CRITICAL: DO NOT PARAPHRASE THE DESCRIPTIONS ──
+The descriptions will say things like "groups rows of a numeric sample matrix by nearest-neighbor connectivity" or "exposes the result on the fitted object". That is code-level language. TRANSLATE it:
+  BAD: "This is an in-memory NumPy-based clustering utility that groups rows of a numeric sample matrix by nearest-neighbor connectivity. It produces one cluster label per input row, exposing the result either on the fitted object or as a direct returned array."
+  GOOD: "This is a KNN clustering implementation — an unsupervised machine learning technique that partitions a dataset into K groups based on nearest-neighbor connectivity, where K is chosen by the user."
+The BAD version paraphrases the technical description. The GOOD version names the algorithm and explains its mechanism in plain language. ALWAYS write like the GOOD version.
 
 ── SLIDE STRUCTURE (MANDATORY) ──
 {_slide_structure}
@@ -1228,11 +1237,13 @@ Rules:
 - Scene 1 camera MUST be "zoom_out_all"; Scene 10 camera MUST be "zoom_out_all"
 - For scenes 2-9, choose the most appropriate camera action
 - Match the tone and length of the examples above — typically 1-3 sentences per slide
+- NEVER use phrases like "in-memory", "sample matrix", "fitted object", "returned array", "numeric matrix", "row-level" — these are code jargon. Use plain language.
+- For the Executive Overview: FIRST name the well-known technology (e.g. "KNN clustering", "FastAPI REST backend", "React SPA"). THEN explain its key mechanism in one sentence. THEN say what it produces for the user.
 - If information for a slide topic is genuinely not available, say "Not enough information to assess this" and move on"""
 
     user_msg = (
         f"Generate the 10-slide structured architecture walkthrough.\n\n"
-        f"── DESCRIPTIONS (ground truth) ──\n{descriptions_context}\n\n"
+        f"── RAW TECHNICAL NOTES (interpret these, do NOT paraphrase them) ──\n{descriptions_context}\n\n"
         f"── VISIBLE GRAPH NODES (for camera focus) ──\n{graph_ref}"
     )
 

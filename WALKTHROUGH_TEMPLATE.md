@@ -21,6 +21,9 @@ Every walkthrough should sound like a knowledgeable colleague explaining over co
 - Every sentence must say something the listener can act on or learn from.
 
 ### What to avoid:
+- **Paraphrasing auto-generated descriptions:** The component descriptions are code-level technical notes. Do NOT echo their wording. Identify the technology, then explain it in your own words.
+  - BAD: "This is an in-memory NumPy-based clustering utility that groups rows of a numeric sample matrix by nearest-neighbor connectivity."
+  - GOOD: "This is a KNN clustering implementation — an unsupervised machine learning technique that partitions a dataset into K groups."
 - **Vague labels instead of explanations:** "a machine learning component for finding groups in data" tells you nothing — explain HOW it works: "partitions data into K clusters where K is chosen by the user."
 - **Padding with synonyms:** "clustering... grouping... putting similar things together" — pick ONE word and move on.
 - **Listing too many examples:** pick 1-2 use cases max, not a laundry list.
