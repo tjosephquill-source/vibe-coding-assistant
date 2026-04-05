@@ -273,6 +273,7 @@
     background:radial-gradient(ellipse at center,#10140c,#080a06);
   }
   #node-desc-bar {
+    position:relative;
     width:100%; height:100%; box-sizing:border-box;
     padding:5% 6%;
     background:none; border:none;
@@ -305,7 +306,7 @@
   }
   #node-desc-bar .desc-slide-title {
     color:var(--accent); font-weight:700;
-    font-size:1.6em; line-height:1.15;
+    font-size:1.2em; line-height:1.2;
     margin-bottom:0.25em;
     text-transform:uppercase; letter-spacing:1.5px;
     text-shadow: 0 0 10px var(--accent-glow);
@@ -1074,14 +1075,25 @@
     box-shadow:0 0 10px var(--accent-glow), 0 0 4px var(--accent);
   }
   .preview-progress-loading {
-    position:absolute; top:-18px; left:50%; transform:translateX(-50%);
-    font-size:10px; color:var(--accent); font-family:'Share Tech Mono',monospace;
-    text-transform:uppercase; letter-spacing:1px; white-space:nowrap;
+    position:absolute; inset:0; z-index:10;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    background:rgba(10,12,8,0.75);
+    font-size:13px; color:var(--accent); font-family:'Share Tech Mono',monospace;
+    text-transform:uppercase; letter-spacing:2px; white-space:nowrap;
     animation: progressLoadPulse 1.2s ease-in-out infinite;
   }
+  .preview-progress-loading::before {
+    content:''; display:inline-block; width:12px; height:12px;
+    border:2px solid var(--accent-dim); border-top-color:var(--accent);
+    border-radius:50%;
+    animation: progressLoadSpin 0.8s linear infinite;
+  }
   @keyframes progressLoadPulse {
-    0%, 100% { opacity:0.4; }
+    0%, 100% { opacity:0.5; }
     50% { opacity:1; }
+  }
+  @keyframes progressLoadSpin {
+    to { transform:rotate(360deg); }
   }
 
   /* ── Project selector ─────────────────────────────────────── */
@@ -3402,25 +3414,25 @@ function _previewPlayScene() {
   }
 }
 
-/* ── Progress bar loading indicator ─────────────────────────────── */
+/* ── Narration loading overlay ───────────────────────────────────── */
 
 function _previewShowProgressLoading() {
-  var bar = document.getElementById('preview-progress');
-  if (!bar) return;
-  // Reset the fill to 0
+  // Reset progress bar fill to 0
   var fill = document.getElementById('preview-progress-fill');
   if (fill) { fill.style.transition = 'none'; fill.style.width = '0%'; }
-  // Add a pulsing loading indicator if not already present
+  // Add a visible loading overlay on top of the narration text
+  var bar = document.getElementById('node-desc-bar');
+  if (!bar) return;
   if (!bar.querySelector('.preview-progress-loading')) {
     var loader = document.createElement('div');
     loader.className = 'preview-progress-loading';
-    loader.textContent = 'Loading…';
+    loader.textContent = 'Loading audio…';
     bar.appendChild(loader);
   }
 }
 
 function _previewHideProgressLoading() {
-  var bar = document.getElementById('preview-progress');
+  var bar = document.getElementById('node-desc-bar');
   if (!bar) return;
   var loader = bar.querySelector('.preview-progress-loading');
   if (loader) loader.remove();
